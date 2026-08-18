@@ -41,27 +41,40 @@
 
 | domain | 含义 | 示例 |
 |---|---|---|
-| `tool` | 外部 SaaS 工具（MCP 连接器） | `tool:slack:read` / `tool:slack:send` |
+| `tool` | 外部 SaaS 工具（MCP 连接器） | `tool:gmail:read` / `tool:gmail:send` |
 | `desktop` | 桌面端本地应用操作 | `desktop:excel:automate` / `desktop:mail:automate` |
 | `browser` | 浏览器自动化 | `browser:web:automate` |
-| `file` | 本地/上传文件访问 | `file:upload:read` |
+| `file` | 桌面端持续访问本地文件 | `file:local:read` |
 | `telemetry` | 结构化操作日志采集 | `telemetry:desktop_excel:collect` |
 | `memory` | 记忆自动写入 | `memory:preference:auto_write` |
 | `llm` | 把内容发往用户自配的模型服务 | `llm:custom:route` |
 
 capability 的受控词表：`read` / `write` / `send` / `automate` / `collect` / `auto_write` / `route`。
 
-> 示例统一用 Phase 1 实际会实现的 Scope。**不要拿 `tool:gmail:*` 当示例**——Gmail 已按 `P0-open-questions.md` B3 移出 Phase 1，用它举例会让人以为要建这个连接器。
+> 示例统一用 Phase 1 实际会实现的 Scope，以 `config/scopes.yaml` 为准。
+>
+> **2026-08-18 更正**：本节原写「不要拿 `tool:gmail:*` 当示例，Gmail 已按 B3 移出 Phase 1」，并用 `tool:slack:*` 作为 `tool` 域示例。首批连接器已改定为 **Gmail + Google Calendar + Notion + GitHub**（`P0-05` §2.1），Slack 反而移出了首批，因此两处示例对调。
+>
+> **`file` 域的示例也改了**（原为 `file:upload:read`）。Web 端上传文件是用户每次显式选择的动作，选择本身就是那一次的同意，不存在「预先授权、此后持续生效」的语义——它属于 L1，**不需要 Scope**。而「注册 → 上传 xlsx → 得到产物」正是 `P0-07` §8.3 零授权 E2E 的核心路径，给它加 Scope 会让那条测试当场挂掉，也就违反了硬约束 5。`file` 域真正需要 Scope 的是桌面端持续访问本地文件系统，属 `P0-08` 范围。
 
 **规则：**
 
 1. Scope 是授权与审计的唯一凭据，任何绕过 Scope 的能力调用视为缺陷。
 2. Scope 粒度必须做到「授权 A 不等于授权 B」：`desktop:excel:automate` 与 `desktop:mail:automate` 是两个独立开关。
-3. 每个 Scope 必须在注册表中声明四项元数据，缺一不可：
-   - `display_name`：给用户看的名字
-   - `collects`：会读取/产生什么数据（面向用户的自然语言，非技术描述）
-   - `risk`：`read` | `write` | `irreversible`
-   - `degraded_behavior`：**未授权时该功能的降级行为**（见 §5 自愿性检查）
+3. 每个 Scope 必须在注册表中声明**六项元数据**，缺一不可：
+
+   | 字段 | 内容 | 性质 |
+   |---|---|---|
+   | `trust_level` | `L1` \| `L2` \| `L3` \| `L4` | 结构化 |
+   | `risk` | `read` \| `write` \| `irreversible` | 结构化 |
+   | `display_name` | 给用户看的名字 | 面向用户的自然语言 |
+   | `collects` | 会读取/产生什么数据（非技术描述） | 同上 |
+   | `retention` | 会留下什么、留多久 | 同上 |
+   | `degraded_behavior` | **未授权时该功能的降级行为**（见 §5） | 同上 |
+
+   > **2026-08-18 更正**：本条原写「四项元数据」并只列了 `display_name` / `collects` / `risk` / `degraded_behavior`，与 `CLAUDE.md` 硬约束 2 的「元数据六项齐全」以及 `P0-07` §3 的实际 schema 都对不上（少了 `retention` 与 `trust_level`）。以本表为准，代码按六项校验。
+   >
+   > 后四项是**面向用户的自然语言**，由产品撰写，不允许技术黑话或留空；`retention` 与 `degraded_behavior` 是授权卡片（`P0-07` §6.1）「会留下什么」「不开启也可以」两段的直接来源。
 4. `risk = irreversible` 的 Scope（对外发信、删除数据、支付类操作）即使已授权，运行时仍强制逐次审批。
 
 ### 3.1 与信任爬坡层级的映射

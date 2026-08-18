@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.turbo/
+
+# 环境与凭据 —— 硬约束 9：凭据不落明文
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store

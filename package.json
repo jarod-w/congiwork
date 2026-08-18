@@ -1,0 +1,9 @@
+{
+  "name": "cogniwork",
+  "private": true,
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "test:backend": "cd apps/backend && .venv/bin/python -m pytest -q",
+    "lint:backend": "cd apps/backend && .venv/bin/python -m ruff check ."
+  }
+}

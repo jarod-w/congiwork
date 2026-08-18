@@ -1,0 +1,353 @@
+# CogniWork Scope 注册表 —— 授权与审计的唯一事实来源
+#
+# 约定见 docs/design/00-conventions.md §3、docs/design/P0-07-consent-and-audit.md §3。
+#
+# 硬性规则（由 apps/backend/tests/guards/ 强制，违反即 CI 失败）：
+#   1. key 必须是 <domain>:<target>:<capability>，capability 取自受控词表
+#   2. 六项元数据齐全：display_name / collects / retention / degraded_behavior / risk / trust_level
+#   3. degraded_behavior 不得为空、不得是占位符、不得表达「功能不可用」
+#   4. 文案不得含诱导性表述
+#   5. 本文件只登记 Phase 1 已实现或即将实现的能力。
+#      未上线的连接器不得出现在这里 —— 注册表是运行时读取的，
+#      出现一个点不开的授权项等于欺骗用户。
+#      （已排除：Slack —— 按 P0-05 §2.1 移出首批，转入候选池）
+#
+# 语言（A8）：交付基线 en-US，zh-CN 为可选语言。
+#   copy.en-US 是发版必需项，且必须过英文母语审校（P0-07 §13 验收 3）。
+#   review_status 字段就是那道发版检查项的落点，不是装饰。
+
+version: 1
+
+# 受控词表 —— 由 registry 加载时校验，不要在代码里另抄一份
+vocabularies:
+  domain: [tool, desktop, browser, file, telemetry, memory, llm]
+  capability: [read, write, send, automate, collect, auto_write, route]
+  risk: [read, write, irreversible]
+  trust_level: [L1, L2, L3, L4]
+
+scopes:
+  # ── tool：Phase 1 首批连接器（P0-05 §2.1 = Gmail + Google Calendar + Notion + GitHub）──
+
+  - key: tool:gmail:read
+    trust_level: L2
+    risk: read
+    third_party_scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
+    # ⚠ restricted scope —— 需 Google CASA 安全评估，见 P0-05 §2.1.1
+    google_tier: restricted
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Read your email
+        collects: |
+          I search and read your email when a task needs it.
+          Message content is used only while working on that task and is not kept afterwards.
+        retention: Message content is not stored. Only a record of what was searched and when, kept for 90 days.
+        degraded_behavior: You can paste the email content you want me to work with.
+      zh-CN:
+        display_name: 读取你的邮件
+        collects: |
+          我会按你每次任务的需要搜索并读取邮件内容。
+          邮件正文只在处理这次任务时使用，不会长期保存。
+        retention: 不保存邮件正文；只保存「在什么时间搜索了什么关键词」的操作记录，保留 90 天
+        degraded_behavior: 你可以把需要处理的邮件内容直接粘贴给我
+
+  - key: tool:gmail:write
+    trust_level: L3
+    risk: write
+    third_party_scopes: ["https://www.googleapis.com/auth/gmail.compose"]
+    google_tier: restricted
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Save email drafts for you
+        collects: |
+          I write drafts into your mailbox so you can review and send them yourself.
+          A draft is never sent without you sending it.
+        retention: A record of which drafts were created and when, kept for 90 days. Draft content is not stored.
+        degraded_behavior: I write the draft here in the conversation and you copy it into your mailbox.
+      zh-CN:
+        display_name: 替你保存邮件草稿
+        collects: |
+          我会把草稿写进你的邮箱，你自己检查后再发送。
+          草稿不会被自动发出。
+        retention: 记录「什么时间建了哪些草稿」，保留 90 天；不保存草稿正文
+        degraded_behavior: 我把草稿写在对话里，你自己复制到邮箱
+
+  - key: tool:gmail:send
+    trust_level: L3
+    risk: irreversible
+    third_party_scopes: ["https://www.googleapis.com/auth/gmail.send"]
+    # ⚠ 档位待核实 —— sensitive 还是 restricted 决定 P0-05 §2.1.1 降级预案是否成立
+    google_tier: unverified
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Send email on your behalf
+        collects: |
+          After you confirm each message, I send it from your mailbox.
+          I ask every single time. There is no option to stop asking.
+        retention: A record of who each message went to and when, kept for 90 days. Message bodies are not stored.
+        degraded_behavior: I write the message and you send it yourself.
+      zh-CN:
+        display_name: 替你发送邮件
+        collects: |
+          你每次确认后，我会用你的邮箱把这封邮件发出去。
+          每一封都会单独问你，没有「以后不用再问」的选项。
+        retention: 记录「什么时间发给了谁」，保留 90 天；不保存正文
+        degraded_behavior: 我把邮件写好，你自己发送
+
+  - key: tool:gcal:read
+    trust_level: L2
+    risk: read
+    third_party_scopes: ["https://www.googleapis.com/auth/calendar.readonly"]
+    google_tier: sensitive
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Read your calendar
+        collects: |
+          I read your events when a task needs to know your schedule.
+          Event details are used only while working on that task.
+        retention: Event details are not stored. Only a record of when the calendar was read, kept for 90 days.
+        degraded_behavior: You can tell me the dates and times you have in mind.
+      zh-CN:
+        display_name: 读取你的日历
+        collects: |
+          任务需要了解你的日程时，我会读取你的日历事件。
+          事件内容只在处理这次任务时使用。
+        retention: 不保存事件内容；只保存「什么时间读过日历」的记录，保留 90 天
+        degraded_behavior: 你可以直接告诉我时间安排
+
+  - key: tool:gcal:write
+    trust_level: L3
+    risk: write
+    third_party_scopes: ["https://www.googleapis.com/auth/calendar.events"]
+    google_tier: sensitive
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Create and update calendar events
+        collects: |
+          I create or change events on your calendar when you ask me to.
+          Deleting an event or sending invitations is asked separately, every time.
+        retention: A record of which events were created or changed and when, kept for 90 days.
+        degraded_behavior: I write out the event details and you add them to your calendar.
+      zh-CN:
+        display_name: 创建和修改日历事件
+        collects: |
+          你要求时，我会在你的日历上创建或修改事件。
+          删除事件、发送邀请这类动作每次单独询问。
+        retention: 记录「什么时间创建或改动了哪些事件」，保留 90 天
+        degraded_behavior: 我把事件信息整理好，你自己添加到日历
+
+  - key: tool:notion:read
+    trust_level: L2
+    risk: read
+    third_party_scopes: ["read_content"]
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Read your Notion pages
+        collects: |
+          I search and read the pages and databases you have shared with this connection.
+          Page content is used only while working on that task.
+        retention: Page content is not stored. Only a record of what was searched and when, kept for 90 days.
+        degraded_behavior: You can paste the content you want me to work with.
+      zh-CN:
+        display_name: 读取你的 Notion 页面
+        collects: |
+          我会搜索并读取你授权给这个连接的页面与数据库。
+          页面内容只在处理这次任务时使用。
+        retention: 不保存页面内容；只保存「在什么时间搜索了什么」的记录，保留 90 天
+        degraded_behavior: 你可以把需要处理的内容直接粘贴给我
+
+  - key: tool:notion:write
+    trust_level: L3
+    risk: write
+    third_party_scopes: ["update_content", "insert_content"]
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Create and edit Notion pages
+        collects: |
+          I create pages and add content where you have given this connection access.
+          Deleting a block is asked separately, every time.
+        retention: A record of which pages were created or changed and when, kept for 90 days.
+        degraded_behavior: I write the content here and you paste it into Notion.
+      zh-CN:
+        display_name: 创建和编辑 Notion 页面
+        collects: |
+          我会在你授权的范围内创建页面、添加内容。
+          删除内容块这类动作每次单独询问。
+        retention: 记录「什么时间创建或改动了哪些页面」，保留 90 天
+        degraded_behavior: 我把内容写在对话里，你自己粘贴到 Notion
+
+  - key: tool:github:read
+    trust_level: L2
+    risk: read
+    third_party_scopes: ["repo:status", "read:org"]
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Read your GitHub repositories
+        collects: |
+          I search code, issues and pull requests in the repositories you have granted access to.
+          Repository content is used only while working on that task.
+        retention: Repository content is not stored. Only a record of what was searched and when, kept for 90 days.
+        degraded_behavior: You can paste the code or issue text you want me to work with.
+      zh-CN:
+        display_name: 读取你的 GitHub 仓库
+        collects: |
+          我会在你授权的仓库里搜索代码、issue 和 pull request。
+          仓库内容只在处理这次任务时使用。
+        retention: 不保存仓库内容；只保存「在什么时间搜索了什么」的记录，保留 90 天
+        degraded_behavior: 你可以把代码或 issue 内容直接粘贴给我
+
+  - key: tool:github:write
+    trust_level: L3
+    risk: write
+    third_party_scopes: ["repo"]
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Create issues and comments on GitHub
+        collects: |
+          I open issues and post comments in the repositories you have granted access to.
+          Merging, closing and pushing are asked separately, every time.
+        retention: A record of what was created and when, kept for 90 days.
+        degraded_behavior: I write the issue or comment here and you post it yourself.
+      zh-CN:
+        display_name: 在 GitHub 上创建 issue 和评论
+        collects: |
+          我会在你授权的仓库里创建 issue、发表评论。
+          合并、关闭、推送这类动作每次单独询问。
+        retention: 记录「什么时间创建了什么」，保留 90 天
+        degraded_behavior: 我把 issue 或评论写好，你自己提交
+
+  # ── desktop：本地应用操作（P0-08）──
+
+  - key: desktop:excel:automate
+    trust_level: L3
+    risk: write
+    requires_os_permission: ["macos.accessibility", "windows.uia"]
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Work in Excel for you
+        collects: |
+          I read the contents and structure of the Excel file you are working on, and edit it as you ask.
+          I do not capture your screen and I do not record what you type.
+        retention: A record of what was changed, including which cells, kept for 30 days so you can check my work.
+        degraded_behavior: You can upload the file and I will send back the edited version.
+      zh-CN:
+        display_name: 替你操作 Excel
+        collects: |
+          我会读取当前 Excel 文件的内容和界面结构，并按你的要求修改表格。
+          我不会截取整个屏幕，也不会记录你的键盘输入。
+        retention: 操作记录（做了什么动作、改了哪些单元格）保留 30 天，用于你事后核对
+        degraded_behavior: 你可以上传 Excel 文件，我处理完给你新文件
+
+  - key: desktop:mail:automate
+    trust_level: L3
+    risk: irreversible
+    requires_os_permission: ["macos.automation", "windows.uia"]
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Send email through your mail app
+        collects: |
+          I use the mail account already signed in on this computer to send messages you have confirmed.
+          I ask every single time. There is no option to stop asking.
+        retention: A record of who each message went to and when, kept for 90 days. Message bodies are not stored.
+        degraded_behavior: I write the message and you send it yourself.
+      zh-CN:
+        display_name: 通过你的邮件客户端发送邮件
+        collects: |
+          我会用你本机已登录的邮箱账户，发送你确认过的邮件。
+          每一封都会单独问你，没有「以后不用再问」的选项。
+        retention: 记录「什么时间发给了谁」，保留 90 天；不保存正文
+        degraded_behavior: 我把邮件写好，你自己发送
+
+  # ── browser ──
+
+  - key: browser:web:automate
+    trust_level: L3
+    risk: write
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Operate a browser for you
+        collects: |
+          I open pages and read what is on them, in a browser session you start.
+          I only act on the sites needed for the task you gave me.
+        retention: A record of which sites were visited and what was done there, kept for 30 days.
+        degraded_behavior: You can export the data yourself and upload the file to me.
+      zh-CN:
+        display_name: 替你操作浏览器
+        collects: |
+          我会在你启动的浏览器会话中打开页面、读取页面内容。
+          只操作完成你交代的任务所需要的站点。
+        retention: 操作记录（访问了哪些站点、做了什么）保留 30 天
+        degraded_behavior: 你可以自己导出数据，把文件上传给我
+
+  # ── llm：A6 自定义 provider ──
+
+  - key: llm:custom:route
+    trust_level: L3
+    risk: write
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Send task content to a model service you configured
+        collects: |
+          Once enabled, task content — including files you upload, your profile, and any memory
+          retrieved for the task — is sent to the address you entered.
+          We do not control that service and cannot guarantee how it handles your content.
+        retention: We record which custom service and model name was used for a task. We do not record what was sent.
+        degraded_behavior: Without this, tasks run on the built-in models and everything works normally.
+      zh-CN:
+        display_name: 把任务内容发到你自己配置的模型服务
+        collects: |
+          你开启后，任务内容（包括你上传的文件内容、你的画像与被检索到的记忆）
+          会发送到你自己填写的那个服务地址。我们不控制那个地址，也无法保证它如何处理这些内容。
+        retention: 我们只记录「某次任务用了哪个自定义服务、哪个模型名」，不记录发送的内容
+        degraded_behavior: 不开启时使用平台默认模型，全部功能正常可用
+
+  # ── memory：记忆自动写入（P0-02）──
+  # ⚠ 本条的 trust_level 与文案由 P0-02 最终确认，此处是可运行的初版
+
+  - key: memory:preference:auto_write
+    trust_level: L2
+    risk: write
+    review_status: pending
+    copy:
+      en-US:
+        display_name: Remember your preferences automatically
+        collects: |
+          When I notice a stable preference in how you work — a format you always use,
+          a tone you prefer — I save it so you do not have to repeat yourself.
+          You can see everything I have saved and delete any of it.
+        retention: Kept until you delete it. Deleting removes it permanently, not just from view.
+        degraded_behavior: I will ask before saving anything, and you can still add notes yourself.
+      zh-CN:
+        display_name: 自动记住你的偏好
+        collects: |
+          当我注意到你稳定的工作习惯——常用的格式、偏好的语气——我会记下来，
+          这样你不用每次重复。你可以查看我记住的全部内容，并删除其中任何一条。
+        retention: 保留到你删除为止。删除是物理删除，不是隐藏
+        degraded_behavior: 每次保存前都问你；你也可以自己手动添加
+
+# ── 关于 file 域的说明（重要，不是遗漏）──
+#
+# 00-conventions.md §3 把 `file:upload:read` 列为 file 域的示例，但本注册表**没有登记它**。
+#
+# 理由：Web 端上传文件是用户每次显式选择的动作，选择本身就是那一次的同意，
+# 不存在「预先授权、此后持续生效」的语义 —— 它属于 L1，不需要 Scope。
+# 而「注册 → 上传 xlsx → 得到产物」正是 P0-07 §8.3 零授权 E2E 的核心路径，
+# 如果给它加一个 Scope，那条测试当场就挂，也就违反了硬约束 5。
+#
+# `file` 域真正需要 Scope 的是桌面端持续访问本地文件系统的能力，
+# 那属于 P0-08 范围，届时以 `file:local:read` 之类的 key 登记。
+#
+# → 待办：00-conventions.md §3 的示例应从 `file:upload:read` 改为 `file:local:read`，
+#   否则它会误导后来者给上传功能加 Scope。已记在 docs/design/P0-open-questions.md 执行清单。
