@@ -64,6 +64,22 @@ jobs:
       - name: Test (含 tests/guards)
         run: uv run pytest -q
 
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install
+      - name: Typecheck + build
+        run: pnpm --filter @cogniwork/web build
+
   # 发版检查项 —— 不阻塞 PR，只在打 tag 时跑。
   # 见 A8 落实要求 ②：授权说明文案必须过英文母语审校。
   release-readiness:

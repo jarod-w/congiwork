@@ -47,6 +47,20 @@ def test_risk_values_match_registry_vocabulary(registry):
     )
 
 
+def test_task_events_match_between_python_and_typescript():
+    """00-conventions.md §7 的 SSE 事件词表，两边必须一致。"""
+    from cogniwork.runtime.events import TASK_EVENTS
+
+    ts = _string_array((SHARED_TYPES / "events.ts").read_text(encoding="utf-8"), "TASK_EVENTS")
+    py = set(TASK_EVENTS)
+    assert ts == py, (
+        "SSE 事件词表不一致：\n"
+        f"  只在 TypeScript: {sorted(ts - py)}\n"
+        f"  只在 Python:     {sorted(py - ts)}\n"
+        "两处定义的是同一份词表（00-conventions.md §7），改一边必须改另一边。"
+    )
+
+
 def test_shared_types_does_not_hardcode_scope_keys():
     """前端不得复制一份 Scope 列表。
 

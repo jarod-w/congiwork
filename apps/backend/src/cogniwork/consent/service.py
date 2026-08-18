@@ -17,7 +17,7 @@ from .models import ConsentAction, ConsentDecision, ConsentState, Risk
 from .registry import ScopeRegistry, get_registry
 from .store import InMemoryConsentStore
 
-__all__ = ["ConsentService", "ConsentStore", "InMemoryConsentStore"]
+__all__ = ["ConsentService", "ConsentStore", "InMemoryConsentStore", "build_consent_service"]
 
 
 class ConsentStore(Protocol):
@@ -41,6 +41,12 @@ class ConsentStore(Protocol):
         device_info: dict[str, Any] | None = None,
         ip_hash: str | None = None,
     ) -> None: ...
+
+
+def build_consent_service(
+    store: ConsentStore, registry: ScopeRegistry | None = None
+) -> ConsentService:
+    return ConsentService(store, registry)
 
 
 class ConsentService:

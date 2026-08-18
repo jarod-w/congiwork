@@ -71,6 +71,10 @@ class InMemoryConsentStore:
         )
         self._states[(user_id, scope_key)] = ConsentState(user_id, scope_key, action, always_allow)
 
+    def record_count(self, user_id: str) -> int:
+        """零授权 E2E（P0-07 §8.3）断言用：全程不应写出任何授权记录。"""
+        return sum(1 for row in self._log if row["user_id"] == user_id)
+
     def clear(self) -> None:
         self._states.clear()
         self._log.clear()
@@ -132,6 +136,14 @@ class PostgresConsentStore:
             # 与 INSERT 同一事务刷新物化视图，避免 Redis 未命中时读到上一拍。
             conn.execute("REFRESH MATERIALIZED VIEW consent_current")
         self._invalidate(user_id)
+
+    def record_count(self, user_id: str) -> int:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT count(*) AS n FROM consent_record WHERE user_id = %s",
+                (UUID(user_id),),
+            ).fetchone()
+        return int(row["n"]) if row else 0
 
     def clear(self) -> None:
         """测试用。生产路径没有「清空授权」这种操作。"""
