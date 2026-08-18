@@ -21,11 +21,15 @@ import pytest
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "cogniwork"
 
-# 允许出现授权判断逻辑的模块 —— 唯一检查点及其直接支撑
+# 允许出现授权判断逻辑的模块 —— 唯一检查点及其直接支撑。
+# store 与授权/撤销 API 是检查点的写入面，不是第二条判定路径：
+# 它们只 append 记录，不得调用 ConsentService.check，也不得出现 check() 定义。
 CONSENT_OWNED = {
     "consent/service.py",
     "consent/registry.py",
     "consent/models.py",
+    "consent/store.py",
+    "api/v1/consent.py",
 }
 
 # 判定「这里在做权限判断」的信号
@@ -78,6 +82,13 @@ def test_consent_service_check_has_a_single_definition():
     assert definitions[0].startswith("consent/service.py:"), (
         f"check() 不在 consent/service.py 里: {definitions[0]}"
     )
+
+
+def test_consent_write_api_does_not_judge_permission():
+    """授权/撤销 API 只负责落记录，不能变成第二条判定路径。"""
+    source = (SRC / "api" / "v1" / "consent.py").read_text(encoding="utf-8")
+    assert "ConsentService" not in source
+    assert "ConsentDecision" not in source
 
 
 def test_no_hardcoded_locale_outside_config():

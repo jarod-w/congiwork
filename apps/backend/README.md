@@ -9,17 +9,30 @@ cd apps/backend
 uv venv --python 3.12
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest -q          # 含 tests/guards/
+.venv/bin/python -m pytest -q          # 含 tests/guards/；默认 memory store
 .venv/bin/python -m uvicorn cogniwork.main:app --reload
 ```
+
+无 Postgres 时把 `COGNIWORK_STORE_BACKEND=memory`（单测 conftest 也会这么设）。
+生产路径是 Postgres + Redis：
+
+```bash
+docker compose up -d
+# 仓库根目录的 .env 里 COGNIWORK_STORE_BACKEND=postgres
+.venv/bin/python -m cogniwork.migrate
+```
+
+CI 在跑测试之前会执行迁移。
 
 ## 目录
 
 | 路径 | 内容 |
 |---|---|
-| `src/cogniwork/core/` | 跨模块基础：配置、错误模型、UUIDv7、时间 |
-| `src/cogniwork/consent/` | **Scope 注册表 + ConsentService（权限检查的唯一检查点）** |
-| `src/cogniwork/api/v1/` | REST 接口，前缀 `/api/v1` |
+| `src/cogniwork/core/` | 跨模块基础：配置、错误模型、UUIDv7、时间、DB/Redis |
+| `src/cogniwork/auth/` | 注册/登录、Bearer JWT |
+| `src/cogniwork/consent/` | **Scope 注册表 + ConsentService（权限检查的唯一检查点）+ Postgres/Redis store** |
+| `src/cogniwork/api/v1/` | REST：`/health` `/auth/*` `/scopes` `/consent` |
+| `src/cogniwork/migrate.py` | SQL 迁移工具（`python -m cogniwork.migrate`） |
 | `migrations/` | SQL 迁移 |
 | `tests/guards/` | **硬约束的可执行形式，见下** |
 

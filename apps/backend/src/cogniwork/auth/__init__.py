@@ -1,0 +1,1 @@
+"""CogniWork auth."""
