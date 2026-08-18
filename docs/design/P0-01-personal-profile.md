@@ -6,6 +6,7 @@
 | 对应规划 | `ai_platform_plan.md` §4.1、§3（Memory OS-P0） |
 | 依赖 | `P0-02 Memory OS`（共用存储）、`P0-03 Agent Runtime`（访谈由 Agent 驱动） |
 | 被依赖 | `P0-03`（上下文注入）、`P0-04`（onboarding 界面）、`P0-06`（Skill 生成时的背景） |
+| 目标用户 | **市场 / 运营**（`P0-open-questions.md` A1 已确认），海外英语市场（A2） |
 | 文档状态 | Draft |
 
 ---
@@ -71,13 +72,18 @@ Profile 与 Memory 共用一套存储（PostgreSQL），但**逻辑上是两类�
 ```sql
 CREATE TABLE profile (
   id          uuid PRIMARY KEY,
-  user_id     uuid NOT NULL UNIQUE,
+  user_id     uuid NOT NULL,
   org_id      uuid NULL,
   version     int  NOT NULL DEFAULT 1,      -- 每次生效变更 +1，用于缓存失效
   completed   boolean NOT NULL DEFAULT false, -- 是否完成过一次访谈
+  archived_at timestamptz NULL,             -- B7：非空即已归档，不再注入
+  archive_reason text NULL,                 -- 用户自填，如"换公司"
   created_at  timestamptz NOT NULL,
   updated_at  timestamptz NOT NULL
 );
+
+-- 一个用户同时只能有一个生效 Profile，但可以有任意多个已归档的
+CREATE UNIQUE INDEX ON profile (user_id) WHERE archived_at IS NULL;
 
 CREATE TABLE profile_field (
   id          uuid PRIMARY KEY,
@@ -118,13 +124,18 @@ extracted ──▶ pending ──user confirm──▶ active ──user edit�
 | `company_context` | string[] | `["50人团队","主要客户是中小电商"]` | 高 |
 | `business_goals` | string[] | `["Q3 把 MQL 提升 30%"]` | 高 |
 | `tools` | string[] | `["Slack","Notion","HubSpot"]` | 中（同时用于连接器推荐） |
+| `recurring_deliverables` | string[] | `["周报","季度渠道复盘","内容排期"]` | 中（同时用于 Skill 推荐） |
 | `preferences.writing_tone` | string | `"简洁、少形容词"` | 高 |
 | `preferences.output_format` | string | `"优先用表格"` | 高 |
-| `preferences.language` | string | `"zh-CN"` | 高 |
-| `working_hours` | object | `{"tz":"Asia/Shanghai","start":"09:30"}` | 低 |
+| `preferences.language` | string | `"en-US"` | 高 |
+| `working_hours` | object | `{"tz":"America/Los_Angeles","start":"09:00"}` | 低 |
 | `custom.*` | any | 自由扩展 | 低 |
 
 未在词表内的 key 一律落到 `custom.*` 命名空间，不阻塞采集。
+
+`recurring_deliverables` 是按 A1（市场 / 运营）新增的一项。加它的理由不是「多采一个字段」，而是它同时是 `P0-06` keyword trigger 的最佳种子：用户说「我每周要交渠道周报」，就等于告诉了系统第一个该被沉淀成 Skill 的流程。没有它，Phase 1 的退出条件「自发创建 ≥3 个 Skill」只能靠用户自己想起来。
+
+`preferences.language` 与 `working_hours` 的示例值按 A2（海外优先）给。默认值取决于 A8（产品文案语言基线，待确认）——实现上默认值必须从配置读，不得硬编码。
 
 ---
 
@@ -152,9 +163,35 @@ Round 3（可跳过，按需）：针对 Round 1 答案的追问（如"你说的
 
 设计要点：
 
-1. **每轮问题由服务端从题库选择，LLM 只负责措辞和追问**。题库定义在 `interview_question.yaml`，含 `key`、`prompt_hint`、`required`、`extractor_schema`。这样保证 Profile 字段可控，同时保留对话感。
+1. **每轮问题由服务端从题库选择，LLM 只负责措辞和追问**。题库定义在 `interview_question.yaml`，含 `key`、`round`、`required`、`prompt_hint`、`options_hint`、`extractor_schema`、`follow_up_when`。这样保证 Profile 字段可控，同时保留对话感。初始题库见 §5.1.1。
 2. **抽取用结构化输出**：每轮结束后调一次 LLM，输入是本轮对话，输出严格匹配 `extractor_schema`（走 tool-use 强制 schema），失败重试 1 次后降级为「跳过该字段」而非阻塞流程。
 3. **随时可退出**：任何时刻用户说「先不聊了 / 直接帮我干活」，立刻结束访谈进入工作区，已采集部分正常保存。
+
+### 5.1.1 初始题库（按 A1 = 市场 / 运营 落实）
+
+题库以**语义 key** 定义，实际问句由 LLM 按用户语言生成，因此下表的中文问法是**语义说明而非最终文案**——交付文案为 **en-US**（A8 已确认）。`options_hint` 是给 LLM 的候选项提示，会渲染成可点选项 + 自由输入，降低打字成本。
+
+| 轮 | key | 问什么（语义） | options_hint | 抽取字段 | 必答 |
+|---|---|---|---|---|---|
+| 1 | `role` | 你现在主要负责哪一块 | 内容 / 活动 / 增长投放 / 用户运营 / 品牌 / 综合市场 | `role`、`custom.sub_function` | ✅ |
+| 1 | `company` | 你们公司做什么业务，主要卖给谁 | — | `industry`、`company_context` | ✅ |
+| 1 | `first_task` | 最近有什么事，如果能有人替你做，你最想交出去 | — | **直接触发首个真实任务**（§5.2），同时落 `business_goals` 候选 | ✅ |
+| 2 | `recurring_deliverables` | 每周或每月你固定要交的东西有哪些 | 周报 / 月报 / 季度复盘 / 内容排期 / 活动方案 / 数据看板 | `recurring_deliverables` | ⬜ |
+| 2 | `tools` | 这些活主要在哪几个工具里干 | 表格（Excel / Google Sheets）/ 文档（Docs / Notion）/ 邮箱 / Slack / CRM / 数据分析 / 广告后台 | `tools` | ⬜ |
+| 2 | `output_format` | 我把东西交给你时，你更想看到哪种形式 | 表格优先 / 要点清单 / 完整成稿 | `preferences.output_format` | ⬜ |
+| 2 | `writing_tone` | 三段示例文案，哪一段最像你平时对外写的 | 三段真实例句 | `preferences.writing_tone` | ⬜ |
+| 3 | `followup_metric` | 你说的增长／投放，主要看哪几个指标 | `follow_up_when: role in [增长投放, 综合市场]` | `business_goals` | ⬜ |
+| 3 | `followup_customer` | 客户主要是哪一类，规模大概多大 | `follow_up_when: company_context 过短或含糊` | `company_context` | ⬜ |
+| 3 | `followup_report` | 你那份周报／复盘里通常有哪几块内容 | `follow_up_when: recurring_deliverables 非空` | `custom.report_outline` | ⬜ |
+
+`followup_report` 的产出直接喂给 `P0-06`：它是「预置示例 Skill 该长什么样」的第一手输入，也是 keyword trigger 的种子。
+
+**措辞四条原则**（题库评审的检查项）：
+
+1. 用「你想让我帮什么」代替「请填写你的岗位职责」。前者是服务，后者是入职表——同样的信息，两种感受在授权意愿上的差别是决定性的（同 §5.2 的理由）。
+2. **不问考核类信息**：KPI 数值、职级、汇报关系、薪资、绩效。这些对输出质量没有增益，却会立刻触发防御心理。这是题库的硬边界，不是措辞偏好。
+3. 偏好类问题**给例子选，不让用户描述抽象风格**。用户说不出「我的语气是什么」，但能一眼认出哪段像自己写的——`writing_tone` 因此设计为三选一而非开放问答。
+4. 每个可跳过问题都带显式「跳过」，且**跳过后不追问原因**。
 
 ### 5.2 访谈与首次任务合一（G1 的关键设计）
 
@@ -202,8 +239,9 @@ Agent Runtime 组装 system prompt 时读取
 角色：Marketing Director（B2B SaaS）
 公司背景：50 人团队；主要客户是中小电商
 当前目标：Q3 把 MQL 提升 30%
+固定交付物：每周渠道周报、季度复盘
 常用工具：Slack、Notion、HubSpot
-输出偏好：简洁、少形容词；优先用表格；中文
+输出偏好：简洁、少形容词；优先用表格；en-US
 </user_profile>
 ```
 
@@ -278,5 +316,10 @@ class ProfileService:
 
 ## 11. 待决问题
 
-1. 题库的初始内容需要产品/用研输入，当前设计只定了结构。建议在 §2.1 的 5–10 人前置实验中一并测试问题措辞。
-2. 用户切换公司/角色时，旧 Profile 如何处理？倾向做「归档 + 新建」而非覆盖，但需要确认是否值得在 Phase 1 投入。
+1. ~~题库的初始内容需要产品/用研输入~~ → **已决（A1 = 市场 / 运营）**：初始题库见 §5.1.1。仍需在 `P0-07` §11 前置实验中验证**措辞**（不是验证问哪些字段），重点测 `writing_tone` 的三段例句是否可辨识、`first_task` 的问法是否能问出足够具体的任务。
+2. ~~用户切换公司/角色时，旧 Profile 如何处理？~~ → **已决（B7，2026-08-18 确认默认做法）**：**归档 + 新建，Phase 1 只做手动触发，不做自动检测。**
+   - **数据模型已同步**（§4 `profile` 表）：`user_id` 的 `UNIQUE` 约束改为**部分唯一索引** `WHERE archived_at IS NULL`。这是本条决策的硬性连带——原约束是 `user_id NOT NULL UNIQUE`，一个用户只能有一行 profile，**归档就等于删除**，与「归档 + 新建」直接冲突。新增 `archived_at` / `archive_reason` 两列。
+   - **归档语义**：已归档 Profile 不再注入任何任务上下文（`profile:{user_id}:v{version}` 缓存 key 立即失效），但**保留可读可导出**——用户换公司不等于要销毁过去的自己。真正的删除仍走 §隐私的物理删除路径。
+   - **不做自动检测的理由**：能触发「你是不是换工作了」这种猜测的信号（邮箱域名变化、`company` 字段被改），全都来自我们本不该拿来做这类推断的数据。猜错的代价是把用户既有画像判为过期，收益却只是省一次手动点击。这条与 `P0-07` 的自愿模型同向。
+   - **入口**：Profile 设置页的显式操作「我换了公司 / 换了岗位」，二次确认后归档旧的、开启新一轮访谈（§5 冷启动流程原样复用，不需要单独设计）。
+3. ~~题库与 Profile Card 的文案语言~~ → **已决（A8）**：交付文案 en-US，中文为可选语言。实现上语言从配置读取、不硬编码。仓库级约定已在 `CLAUDE.md` 同步修改。

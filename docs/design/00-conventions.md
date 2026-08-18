@@ -41,14 +41,17 @@
 
 | domain | 含义 | 示例 |
 |---|---|---|
-| `tool` | 外部 SaaS 工具（MCP 连接器） | `tool:gmail:read` / `tool:gmail:send` |
-| `desktop` | 桌面端本地应用操作 | `desktop:excel:automate` |
+| `tool` | 外部 SaaS 工具（MCP 连接器） | `tool:slack:read` / `tool:slack:send` |
+| `desktop` | 桌面端本地应用操作 | `desktop:excel:automate` / `desktop:mail:automate` |
 | `browser` | 浏览器自动化 | `browser:web:automate` |
 | `file` | 本地/上传文件访问 | `file:upload:read` |
 | `telemetry` | 结构化操作日志采集 | `telemetry:desktop_excel:collect` |
 | `memory` | 记忆自动写入 | `memory:preference:auto_write` |
+| `llm` | 把内容发往用户自配的模型服务 | `llm:custom:route` |
 
-capability 的受控词表：`read` / `write` / `send` / `automate` / `collect` / `auto_write`。
+capability 的受控词表：`read` / `write` / `send` / `automate` / `collect` / `auto_write` / `route`。
+
+> 示例统一用 Phase 1 实际会实现的 Scope。**不要拿 `tool:gmail:*` 当示例**——Gmail 已按 `P0-open-questions.md` B3 移出 Phase 1，用它举例会让人以为要建这个连接器。
 
 **规则：**
 
@@ -96,7 +99,7 @@ ExecutionAudit.record(...)   ← 无论成功失败都必须落审计
   "approval_id": "uuid",
   "task_id": "uuid",
   "step_id": "uuid",
-  "scope": "tool:gmail:send",
+  "scope": "desktop:mail:automate",
   "risk": "irreversible",
   "title": "发送邮件给 3 位收件人",
   "preview": { "type": "email|table|diff|text", "data": {} },

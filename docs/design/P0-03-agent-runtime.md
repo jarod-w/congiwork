@@ -40,7 +40,7 @@ Agent Runtime 是所有「AI 执行工作」的统一内核。Web 聊天、Skill
 | RT-4 | Human-in-the-loop | 中断、审批、编辑后继续 | 审批等待期间不占用计算资源 |
 | RT-5 | 持久化与恢复 | Checkpointer 落 PostgreSQL | kill -9 后可从最后一个 checkpoint 恢复 |
 | RT-6 | 事件流 | SSE 推送执行过程，支持断线重连补发 | 见 `00-conventions.md` §7 |
-| RT-7 | Model Router | 按任务类型/上下文长度/能力需求路由模型 | 支持 ≥2 家供应商，切换无需改业务代码 |
+| RT-7 | Model Router | 按任务类型/上下文长度/能力需求路由模型 | **2 家内置供应商 + 用户自定义 provider**（A6），切换无需改业务代码 |
 | RT-8 | 资源治理 | 超时、重试、并发上限、成本上限 | 单任务成本超限自动暂停并询问用户 |
 | RT-9 | 失败处理 | 分类错误、可读的失败说明、可重试 | 用户能看懂失败原因并知道下一步 |
 
@@ -146,11 +146,11 @@ Runtime 不认识 MCP、不认识 PyAutoGUI，只认识 `ToolSpec`：
 ```python
 @dataclass
 class ToolSpec:
-    name: str                    # 'gmail.send_email'
+    name: str                    # 'slack.post_message'
     provider: str                # 'mcp' | 'desktop' | 'browser' | 'builtin'
     description: str
     input_schema: dict           # JSON Schema，直接给 LLM 做 tool-use
-    scope_key: str | None        # 'tool:gmail:send'
+    scope_key: str | None        # 'tool:slack:send'
     risk: Literal['read','write','irreversible']
     preview_renderer: str | None # 审批卡片用哪个渲染器：'email'|'table'|'diff'|'text'
     timeout_s: int = 60
@@ -236,12 +236,40 @@ routes:
 
 providers:
   primary:   { vendor: anthropic, ... }
-  fallback:  { vendor: <second_vendor>, ... }
+  fallback:  { vendor: openai, ... }        # A6：第二家
+  user_custom:                               # A6：用户自定义，见 §7.1
+    vendor: openai_compatible
+    from: user_config                        # base_url / api_key / model 由用户提供
 ```
 
-Phase 1 约束（计划 §7.6）：**先跑通 1–2 家**。故 `fallback` 只在 primary 连续失败时启用，不做智能负载分配。
+Phase 1 约束（A6 已确认）：**内置 2 家 + 支持用户自定义 provider**。`fallback` 只在 primary 连续失败时启用，不做智能负载分配。
+
+**第二家选 OpenAI**（默认取值，可改）。理由不是市场份额，而是**它的 API 形状就是 custom provider 的通用形状**——绝大多数自托管与第三方推理服务（vLLM、Ollama、OpenRouter、Together 等）都提供 OpenAI 兼容接口。因此一套 `openai_compatible` 适配器同时满足「第二家内置」和「支持自定义」两个需求，A6 的两半用一份工程量覆盖。若第二家改选别家，custom provider 仍需单独实现 OpenAI 兼容层，A6 的成本会上升。
 
 模型能力差异由 `LLMClient` 抽象层吸收（tool-use 格式、流式协议、token 计数），业务层不感知 vendor。
+
+### 7.1 Custom Provider（A6）
+
+允许用户填 `base_url` + `api_key` + `model`，把任务发到自己的模型服务。这个能力有四个必须解决的问题，任何一个漏掉都是缺陷而非待优化项：
+
+**① 它是一次数据外发，必须有 Scope。** 任务内容（含上传文件、画像、被检索的记忆）会发到一个我们不控制的端点，因此绑定 Scope `llm:custom:route`（L3 / risk=write，定义见 `P0-07` §3），默认关闭，`degraded_behavior` = 使用平台默认模型且全部功能正常。「是用户自己填的地址所以不用问」不成立——用户填的时候未必想到会连画像和记忆一起发出去，授权卡片必须把这点写明。
+
+**② `base_url` 必须做 SSRF 防护。** 这是本节最容易被忽略的安全问题：用户填的 URL 由**服务端**发起请求，等于把服务端变成了代理。防护规则（在保存时校验 + 每次请求前复核，两处都做，因为 DNS 可以在中间变化）：
+
+| 规则 | 内容 |
+|---|---|
+| 协议 | 仅 `https`，拒绝 `http` / `file` / `gopher` 等 |
+| 目标地址 | 解析后的 IP 必须是公网单播地址。**拒绝**回环（127/8、::1）、私网（10/8、172.16/12、192.168/16、fc00::/7）、link-local（169.254/16——**云元数据端点**）、组播、保留段 |
+| DNS rebinding | 解析一次后**用解析到的 IP 直连**并带上原 Host 头，不给「校验时解析成公网、请求时解析成内网」留窗口 |
+| 重定向 | 不跟随任何重定向 |
+| 出网 | 走独立的出网代理 / 独立安全组，与内部服务网络隔离；即使前述规则被绕过，也到不了内部服务 |
+| 超时与体积 | 独立的严格超时与响应体上限，防止拖死连接池 |
+
+**③ 能力探测与降级。** Runtime 的多处功能依赖 tool-use 强制 schema（`P0-01` 的画像抽取、`P0-06` 的 Skill 草稿生成、`builtin.ask_user`）。自定义 provider 未必支持。做法：连接时跑一次探测（发一个最小 tool-use 请求 + 一个流式请求），把结果存成 `capabilities: {tool_use, streaming, vision, json_schema, max_context}`；路由时把 `RoutingRequest.needs_tool_use` 与之比对，**不支持则不路由到该 provider**，并在设置页明确告知「你配置的模型不支持工具调用，涉及工具的任务仍会使用平台默认模型」。**绝不静默降级成文本解析 tool call**——那会带来一类极难排查的错误。
+
+**④ 成本口径改变。** 自定义 provider 的单价我们不知道，`task.cost_usd` 无法计算。因此 §8 的成本上限对该 provider 改用 **token 口径**（单任务 token 上限），并允许用户在配置里自填单价以恢复金额显示。审计只记 provider 标识与 model 名，不记内容（`P0-07` 硬约束）。
+
+`api_key` 走 `P0-05` §5 的同一套信封加密存储，不落明文、不进日志、不进 trace。
 
 ---
 
@@ -250,13 +278,18 @@ Phase 1 约束（计划 §7.6）：**先跑通 1–2 家**。故 `fallback` 只�
 | 维度 | 默认值 | 超限行为 |
 |---|---|---|
 | 单任务步数 | 25 | 转审批询问是否继续 |
-| 单任务成本 | $0.50 | 转审批，展示已花费明细 |
+| 单任务成本 | **$0.50**（A6 确认） | 转审批，展示已花费明细 |
+| **单用户单日成本** | **$5.00**（A6 确认） | 当日转为仅 `fast.small` 路由并提示用户；不硬停 |
 | 单任务墙钟时长 | 30 min（不含审批等待） | `timed_out` |
 | 单工具调用超时 | `ToolSpec.timeout_s` | 重试 1 次后作为 step 失败 |
 | 用户并发任务数 | 3 | 排队 |
 | 全局 LLM 并发 | 按配额配置 | 令牌桶限流，超限排队 |
 
 成本记账：每次 LLM 调用后累加到 `task.cost_usd`，同时写日次聚合表供后续定价验证（计划 §10.3 需要这份数据）。
+
+两条阈值都是**估值**，上线后按 P90 实际消耗校准（见 §11 待决 2）。自定义 provider 无法按金额记账，改用 token 口径，见 §7.1 ④。
+
+单用户日上限选择「降级路由」而不是「硬停」：硬停会让用户在工作日中途突然完全用不了产品，而 Phase 1 只有 6 个目标用户（A3），任何一个被打断都是不可承受的损失。降级到小模型仍能完成大部分文案类任务。
 
 ---
 
@@ -266,7 +299,7 @@ Phase 1 约束（计划 §7.6）：**先跑通 1–2 家**。故 `fallback` 只�
 
 | 分类 | 例子 | 呈现给用户 | 可重试 |
 |---|---|---|---|
-| `permission_denied` | 未授权 Gmail 发送 | 「我需要你授权发送邮件才能完成这步，也可以我把草稿给你自己发」 | 授权后是 |
+| `permission_denied` | 未授权邮件发送（`desktop:mail:automate`） | 「我需要你授权发送邮件才能完成这步，也可以我把草稿给你自己发」 | 授权后是 |
 | `upstream_error` | Notion API 503 | 「Notion 暂时没响应」 | 是 |
 | `tool_failed` | Excel 适配器定位不到控件 | 「操作 Excel 时没找到目标位置」+ 截图 | 是 |
 | `invalid_input` | 用户给的文件格式不支持 | 「这个格式我还读不了，支持这些：…」 | 否 |
@@ -300,8 +333,11 @@ SSE 断线重连：客户端携带 `from_seq`，服务端从 Redis Stream（保�
 | LangGraph 的中断/恢复语义与我们的审批模型不完全匹配，被框架绑架 | 高 | 在 LangGraph 之上包一层 `TaskEngine` 门面，业务代码只依赖门面；框架若不合用可替换实现而不改上层 |
 | Agent 陷入无效循环烧钱 | 高 | 步数/成本/时长三重上限；重复工具调用检测（同 name+args 连续 3 次即中断） |
 | 审批打断太频繁，用户嫌烦 | 高 | 「始终允许该 Scope」选项（`irreversible` 除外）；同类操作批量审批（一次确认 5 封邮件） |
-| 长任务期间用户关页面导致上下文丢失 | 中 | checkpointer 落库，任务与连接解耦；桌面端/邮件通知完成 |
+| 长任务期间用户关页面导致上下文丢失 | 中 | checkpointer 落库，任务与连接解耦；**桌面通知 + 站内消息**告知完成（B9：Phase 1 不做邮件通知） |
 | 部分成功被描述成完成，损害信任 | 高 | `finalize` 输出结构化 `completed_steps` / `skipped_steps`，UI 强制展示后者 |
+| **Custom Provider 成为 SSRF 跳板**（A6 引入） | **极高** | §7.1 ② 的六条防护，保存时与请求时双重校验；出网隔离；§12 验收 6 逐类断言 |
+| Custom Provider 能力不足导致任务大面积失败，用户归因到产品 | 中 | §7.1 ③ 的能力探测 + 不满足即不路由 + 明确告知；不静默降级 |
+| 用户用 custom provider 后成本失控（我们不计费也不可见） | 低 | token 口径上限（§7.1 ④）；设置页明示「用你自己的 key 时，费用由你的服务商向你收取」 |
 
 ---
 
@@ -311,7 +347,10 @@ SSE 断线重连：客户端携带 `from_seq`，服务端从 Redis Stream（保�
 2. 对所有注册工具的自动化断言：非 builtin-read 工具均有 `scope_key`，且调用链必过 `ConsentService`（用 mock 断言调用次数）。
 3. `irreversible` 工具在「已授权 + 已选始终允许」的情况下仍触发审批。
 4. SSE 断开 30s 后重连，事件无丢失无重复（`seq` 连续）。
-5. 单任务成本超 $0.50 时暂停并展示明细。
+5. 单任务成本超 $0.50 时暂停并展示明细；单用户单日超 $5.00 时降级路由并提示。
+6. **Custom Provider 安全验收**（A6）：对 §7.1 ② 表格中每一类地址（回环、私网、link-local / 云元数据、组播、`http://`、带重定向的 URL）各写一个测试用例，断言全部被拒；并断言 DNS rebinding 场景下请求不会打到内网。
+7. **Custom Provider 能力降级验收**：配置一个不支持 tool-use 的 provider，断言涉及工具的任务不路由到它、且用户看到明确说明，而不是任务失败或静默文本解析。
+8. 未开启 `llm:custom:route` 的用户，任何请求都不发往用户配置的端点（用出网抓包或 mock 断言）。
 6. 构造 10 个含失败步骤的任务，结果文案中 100% 明确列出未完成项。
 
 ---
@@ -325,12 +364,19 @@ SSE 断线重连：客户端携带 `from_seq`，服务端从 Redis Stream（保�
 | M3 | 工具抽象层 + builtin 工具 + 权限钩子 | 4d |
 | M4 | 审批中断/恢复 + ApprovalRequest | 4d |
 | M5 | SSE 事件流 + 断线补发 | 3d |
-| M6 | Model Router + LLMClient 抽象 | 3d |
+| M6 | Model Router + LLMClient 抽象（Anthropic + OpenAI 两家） | 4d |
+| M6b | **Custom Provider**（A6）：SSRF 校验 + 能力探测 + 凭据 + `llm:custom:route` 授权 + 设置页 | **4d** |
 | M7 | 资源治理 + 错误分类 + finalize | 3d |
+
+M6b 是 A6 带来的净增工程量（约 4 人日）。它不能省的部分是 SSRF 防护与能力探测——前者是安全缺陷，后者不做会产生一类难排查的运行时错误（§7.1）。可省的部分是设置页的打磨程度。
 
 ---
 
 ## 14. 待决问题
 
-1. 是否需要「后台任务」形态（用户发起后关闭客户端，完成后通知）？技术上 checkpointer 已支持，主要是通知渠道（邮件/桌面通知）的产品决策。建议 Phase 1 做桌面通知，邮件通知延后。
-2. 步数/成本默认阈值需要真实数据校准，当前是估值。上线后按 P90 任务的实际消耗调整。
+1. ~~是否需要「后台任务」形态~~ → **已决（B9，2026-08-18 确认默认做法）**：**Phase 1 只做桌面通知 + 站内消息，邮件通知延后。** 技术上 checkpointer 已支持后台执行，本条决的只是通知渠道。
+   - ⚠️ **本条原先写的理由是错的，一并更正**：原文写「B3 之后我们本身也没有发邮件的 SaaS 通道了，所以邮件通知延后的理由更强」。这个推理站不住——**平台通知邮件走的是事务邮件服务（SES / SendGrid 之类），与 Gmail 连接器毫无关系**。用用户自己授权的 Gmail scope 去发我们的平台通知，是对该授权用途的挪用，`tool:gmail:send` 的 `collects` 说明里写的是「你每次确认后，我会用你的邮箱把这封邮件发出去」，平台通知不在其内。所以 B3 的翻转（Gmail 回到首批）**不影响本条**。
+   - 邮件通知延后的真实理由是另外两条：① 它需要一套独立的事务邮件基础设施（送达率、退信处理、退订链接、反垃圾合规），成本与「通知」这件事的价值不成比例；② 桌面端常驻，桌面通知的到达率在 Phase 1 的用户规模下足够。
+   - **站内消息需要落库**（未读态、已读标记），不能只做前端瞬时提示——用户关掉客户端时收不到桌面通知，回来必须能看到发生过什么。
+2. 步数/成本默认阈值：**金额已按 A6 确认为单任务 $0.50、单用户日 $5.00**，但仍是估值，上线后按 P90 实际消耗校准。
+3. 第二家内置 provider 取 **OpenAI** 是本文的默认取值（理由见 §7），A6 只确认了「2 家 + custom」，未指定第二家。若决策者另有指定，§7.1 的 `openai_compatible` 适配器仍需保留，因为 custom provider 依赖它。
