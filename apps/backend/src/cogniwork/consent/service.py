@@ -11,33 +11,36 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
-from .models import ConsentDecision, ConsentState, Risk
+from .models import ConsentAction, ConsentDecision, ConsentState, Risk
 from .registry import ScopeRegistry, get_registry
+from .store import InMemoryConsentStore
+
+__all__ = ["ConsentService", "ConsentStore", "InMemoryConsentStore"]
 
 
 class ConsentStore(Protocol):
     """当前授权状态的读取接口。
 
     实现（P0-07 §4）：Redis `consent:{user_id}` hash 优先，未命中回落
-    `consent_current` 物化视图。这里只声明接口，Phase 1 M1 落库时再接实现。
+    `consent_current` 物化视图。写入走 append()，见 consent/store.py。
     """
 
     def current(self, user_id: str, scope_key: str) -> ConsentState | None: ...
 
-
-class InMemoryConsentStore:
-    """内存实现 —— 用于测试与本地开发，不用于生产。"""
-
-    def __init__(self, states: dict[tuple[str, str], ConsentState] | None = None) -> None:
-        self._states = dict(states or {})
-
-    def current(self, user_id: str, scope_key: str) -> ConsentState | None:
-        return self._states.get((user_id, scope_key))
-
-    def set(self, state: ConsentState) -> None:
-        self._states[(state.user_id, state.scope_key)] = state
+    def append(
+        self,
+        *,
+        user_id: str,
+        scope_key: str,
+        action: ConsentAction,
+        always_allow: bool,
+        surface: str,
+        consent_text_version: str,
+        device_info: dict[str, Any] | None = None,
+        ip_hash: str | None = None,
+    ) -> None: ...
 
 
 class ConsentService:

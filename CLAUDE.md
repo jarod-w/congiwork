@@ -8,10 +8,12 @@ CogniWork（AI Coworker OS）。本文件给在此仓库工作的 Claude Code �
 
 ```
 config/scopes.yaml        ✅ Scope 注册表（授权与审计的唯一事实来源）
-apps/backend/             🚧 core/ + consent/ 已建，Runtime / Memory / API 未开始
-  src/cogniwork/core/       配置、错误模型、UUIDv7、UTC 时间
-  src/cogniwork/consent/    Scope 注册表加载校验 + ConsentService（唯一检查点）
-  migrations/               0001_consent.sql（已写，未接库）
+apps/backend/             🚧 core/ + consent/ + auth/ + api/v1 已建，Runtime / Memory 未开始
+  src/cogniwork/core/       配置、错误模型、UUIDv7、UTC 时间、DB/Redis
+  src/cogniwork/consent/    Scope 注册表 + ConsentService + Postgres/Redis store
+  src/cogniwork/auth/       注册/登录、Bearer JWT
+  src/cogniwork/migrate.py  SQL 迁移工具
+  migrations/               0001_consent.sql + 0002_account.sql
   tests/guards/           ✅ 硬约束的可执行形式，见下
 packages/shared-types/    ✅ 错误码、SSE 事件、审批动作
 apps/web/                 ⬜ 空目录

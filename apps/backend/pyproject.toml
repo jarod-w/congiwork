@@ -10,6 +10,11 @@ dependencies = [
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
     "uuid7>=0.1.0",  # 提供 uuid_extensions 模块
+    "psycopg[binary,pool]>=3.2",
+    "redis>=5.2",
+    "PyJWT>=2.9",
+    "argon2-cffi>=23.1",
+    "email-validator>=2.2",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +40,7 @@ testpaths = ["tests"]
 addopts = "-m 'not release'"
 markers = [
     "release: 发版检查项，不阻塞 PR 合并（用 -m release 单独跑）",
+    "integration: 需要 Postgres + Redis（CI 提供；本地无基础设施时自动 skip）",
 ]
 
 [tool.ruff]
@@ -43,3 +49,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/conftest.py" = ["E402"]

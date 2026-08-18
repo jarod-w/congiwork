@@ -50,18 +50,7 @@
 
 ## 阶段 1 · 地基（第 1 周）
 
-**部分已完成**，见文末「已完成」。剩下的：
-
-- [ ] **Consent 落库**：接上 `0001_consent.sql`，实现 `ConsentStore` 的 Postgres + Redis 实现 — `P0-07` §4 — 2d
-      - 当前只有 `InMemoryConsentStore`，接口已定义好（`consent/service.py`）
-      - Redis `consent:{user_id}` hash 优先，未命中回落 `consent_current` 物化视图
-- [ ] **`GET /api/v1/scopes`**：把注册表暴露给前端 — `P0-07` §3 — 0.5d
-      - 前端不许复制一份 Scope 列表，有守护拦（`test_cross_language_contracts.py`）
-- [ ] **授权/撤销 API**：`POST /api/v1/consent`、`DELETE /api/v1/consent/{scope}` — `P0-07` §6.1、§6.3 — 1d
-      - 撤销是**追加 `action=revoked`**，不是删记录（append-only）
-      - 撤销后询问「要一起删除已产生的记录吗」，**默认不删**（B2）
-- [ ] **认证**：Bearer JWT + 注册/登录 — `00-conventions.md` §6 — 2d
-- [ ] **数据库迁移工具接入** + CI 里跑迁移 — `00-conventions.md` §2 — 1d
+**部分已完成**，见文末「已完成」。剩下的：无。本阶段五项均已完成。
 
 ---
 
@@ -270,5 +259,10 @@
 - [x] **`0001_consent.sql`** —— `consent_record`（append-only）+ `consent_current` + `execution_audit`（按月分区）— `P0-07` §4、§5.2
 - [x] **CI workflow** —— 守护测试与普通测试一起跑；发版检查项只在打 tag 时跑
 - [x] 修 `00-conventions.md` 三处与新决策矛盾的地方（Gmail/Slack 示例对调、`file:upload:read` → `file:local:read`、「四项元数据」→ 六项）
+- [x] **Consent 落库** —— `PostgresConsentStore`：Redis `consent:{user_id}` hash 优先，未命中回落 `consent_current`；写时失效 — `P0-07` §4
+- [x] **`GET /api/v1/scopes`** —— 注册表按请求语言暴露，前端不得复制 — `P0-07` §3
+- [x] **授权/撤销 API** —— `POST /api/v1/consent`、`DELETE /api/v1/consent/{scope}`；撤销 append `revoked`；`purge_data` 默认 false（B2）— `P0-07` §6.1、§6.3
+- [x] **认证** —— `POST /api/v1/auth/register`、`/login`、`GET /auth/me`；Bearer JWT — `00-conventions.md` §6
+- [x] **数据库迁移工具** —— `python -m cogniwork.migrate`；`0002_account.sql`；CI 在测试前跑迁移 — `00-conventions.md` §2
 
-**未完成的部分**：`ConsentStore` 只有内存实现（Postgres + Redis 见阶段 1）；零授权 E2E 套件（`P0-07` §8.3）未写；动态版无旁路测试留了 skip 占位等 `P0-03` M3。
+**未完成的部分**：零授权 E2E 套件（`P0-07` §8.3）未写；动态版无旁路测试留了 skip 占位等 `P0-03` M3。Memory OS 落地前，撤销时 `purge_data=true` 会如实返回 `purge_supported: false`。

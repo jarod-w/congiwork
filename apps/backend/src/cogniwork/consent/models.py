@@ -73,6 +73,9 @@ class ScopeSpec:
     requires_os_permission: tuple[str, ...] = ()
     google_tier: str | None = None
     review_status: str = "pending"
+    # 用户当时看到的说明文案版本。采集范围扩大时必须 bump，
+    # 并把存量授权置为 expired（P0-07 §6.3）。仅措辞优化不改这个值。
+    consent_text_version: str = "1"
 
     @property
     def domain(self) -> str:

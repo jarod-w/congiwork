@@ -11,6 +11,35 @@ jobs:
     defaults:
       run:
         working-directory: apps/backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cogniwork
+          POSTGRES_PASSWORD: cogniwork
+          POSTGRES_DB: cogniwork
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      COGNIWORK_STORE_BACKEND: postgres
+      COGNIWORK_DATABASE_URL: postgresql://cogniwork:cogniwork@localhost:5432/cogniwork
+      COGNIWORK_REDIS_URL: redis://localhost:6379/0
+      COGNIWORK_JWT_SECRET: ci-jwt-secret-not-for-production
+      COGNIWORK_IP_HASH_PEPPER: ci-ip-pepper-not-for-production
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +55,9 @@ jobs:
 
       - name: Format check
         run: uv run ruff format --check .
+
+      - name: Migrate
+        run: uv run python -m cogniwork.migrate
 
       # 守护测试与普通测试一起跑。它们是硬约束的可执行形式，
       # 挂了就是违反了 CLAUDE.md 里的硬约束，不是「测试没写好」。

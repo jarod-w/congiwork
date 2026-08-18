@@ -27,7 +27,9 @@ export interface ScopeSpec {
   trust_level: TrustLevel;
   risk: Risk;
   copy: ScopeCopy;
+  consent_text_version: string;
   requires_os_permission?: string[];
+  third_party_scopes?: string[];
 }
 
 /** 用户可选动作固定为四种（00-conventions.md §4）。 */

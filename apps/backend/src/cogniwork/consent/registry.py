@@ -210,6 +210,7 @@ def load_registry(path: Path | None = None) -> ScopeRegistry:
             requires_os_permission=tuple(entry.get("requires_os_permission") or ()),
             google_tier=entry.get("google_tier"),
             review_status=entry.get("review_status", "pending"),
+            consent_text_version=str(entry.get("consent_text_version") or "1"),
         )
 
     return ScopeRegistry(scopes, {k: list(v) for k, v in vocab.items()})

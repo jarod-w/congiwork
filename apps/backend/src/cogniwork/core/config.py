@@ -30,8 +30,19 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # ── 数据 ──
+    # memory：进程内实现，给单测与无基础设施的本地启动。
+    # postgres：生产路径。Redis 是授权态缓存，写时失效；未命中回落 consent_current。
+    store_backend: str = "postgres"
     database_url: str = "postgresql://localhost:5432/cogniwork"
     redis_url: str = "redis://localhost:6379/0"
+
+    # ── 认证（00-conventions.md §6：Bearer JWT）──
+    jwt_secret: str = "dev-only-change-me-not-for-production!!"
+    jwt_algorithm: str = "HS256"
+    jwt_ttl_seconds: int = 60 * 60 * 24 * 7
+
+    # IP 入 consent_record 前先哈希，不存原文（硬约束 8）
+    ip_hash_pepper: str = "dev-only-change-me"
 
 
 @lru_cache(maxsize=1)
