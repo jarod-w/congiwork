@@ -5,7 +5,7 @@ import os
 # 必须在 import cogniwork 之前：Settings 是 lru_cache，单测默认走内存实现。
 # CI 会预先设置 COGNIWORK_STORE_BACKEND=postgres，setdefault 不会覆盖。
 os.environ.setdefault("COGNIWORK_STORE_BACKEND", "memory")
-os.environ.setdefault("COGNIWORK_JWT_SECRET", "test-jwt-secret")
+os.environ.setdefault("COGNIWORK_JWT_SECRET", "test-jwt-secret-32-bytes-minimum!!")
 os.environ.setdefault("COGNIWORK_IP_HASH_PEPPER", "test-ip-pepper")
 
 import pytest

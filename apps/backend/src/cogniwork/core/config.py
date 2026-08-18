@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # ── 认证（00-conventions.md §6：Bearer JWT）──
-    jwt_secret: str = "dev-only-change-me"
+    jwt_secret: str = "dev-only-change-me-not-for-production!!"
     jwt_algorithm: str = "HS256"
     jwt_ttl_seconds: int = 60 * 60 * 24 * 7
 

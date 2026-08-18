@@ -51,7 +51,7 @@ def remember(request: Request, body_hash: str, status: int, body: dict[str, Any]
     if redis is None:
         return
     try:
-        redis.setex(cache_key, _TTL_SECONDS, encoded)
+        redis.set(cache_key, encoded, ex=_TTL_SECONDS)
     except RedisError:
         return
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from cogniwork.consent.models import ConsentAction, ConsentDecision, Risk
@@ -70,10 +72,15 @@ def test_consent_roundtrip_invalidates_redis(migrated, registry):
             surface="web",
             consent_text_version="1",
         )
+        # 写时先删缓存；下一次 current() 才会从 MV 回填。
+        if redis is not None:
+            assert not redis.exists(f"consent:{user_id}")
         # 写时失效：撤销后立即 DENY —— P0-07 §13 验收 4
         assert svc.check(user_id, scope_key, Risk.READ) is ConsentDecision.DENY
         if redis is not None:
-            assert not redis.exists(f"consent:{user_id}")
+            raw = redis.hget(f"consent:{user_id}", scope_key)
+            assert raw is not None
+            assert json.loads(raw)["action"] == ConsentAction.REVOKED
     finally:
         store.clear()
         pool.close()

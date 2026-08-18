@@ -1,7 +1,7 @@
 """当前登录账号。
 
-不要把这个函数命名为 check —— tests/guards/test_no_bypass.py 要求
-ConsentService.check 是全代码库唯一的 check() 定义。
+不要把这个函数命名为 check —— 全库只能有一个 check() 定义，
+那是运行时授权检查点（tests/guards/test_no_bypass.py）。
 """
 
 from __future__ import annotations

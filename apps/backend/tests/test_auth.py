@@ -56,7 +56,10 @@ def test_login_success_and_wrong_password(client):
     )
     assert bad.status_code == 401
     assert bad.json()["error"]["code"] == ErrorCode.UNAUTHORIZED
-    assert "password" not in bad.text.lower() or "invalid email or password" in bad.json()["error"]["message"].lower()
+    assert (
+        "password" not in bad.text.lower()
+        or "invalid email or password" in bad.json()["error"]["message"].lower()
+    )
 
 
 def test_login_unknown_email_same_message(client):
@@ -83,7 +86,8 @@ def test_validation_error_uses_standard_shape_and_hides_password(client):
     body = response.json()
     assert set(body["error"]) == {"code", "message", "details", "trace_id"}
     assert body["error"]["code"] == ErrorCode.INVALID_REQUEST
-    assert "short" not in str(body)
+    # 密码原文不得出现在错误详情里；"string_too_short" 这类 type 名可以留
+    assert '"short"' not in str(body)
 
 
 def test_register_idempotency_key_replays(client):

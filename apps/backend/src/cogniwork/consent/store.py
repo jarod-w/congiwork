@@ -69,9 +69,7 @@ class InMemoryConsentStore:
                 "created_at": now(),
             }
         )
-        self._states[(user_id, scope_key)] = ConsentState(
-            user_id, scope_key, action, always_allow
-        )
+        self._states[(user_id, scope_key)] = ConsentState(user_id, scope_key, action, always_allow)
 
     def clear(self) -> None:
         self._states.clear()

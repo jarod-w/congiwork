@@ -85,8 +85,7 @@ def apply_migrations(
             with conn.transaction():
                 conn.execute(script)
                 conn.execute(
-                    "INSERT INTO schema_migrations (version, name, applied_at)"
-                    " VALUES (%s, %s, %s)",
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (%s, %s, %s)",
                     (version, name, now()),
                 )
             applied.append(f"{version}_{name}")
