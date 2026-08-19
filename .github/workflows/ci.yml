@@ -40,6 +40,8 @@ jobs:
       COGNIWORK_REDIS_URL: redis://localhost:6379/0
       COGNIWORK_JWT_SECRET: ci-jwt-secret-not-for-production
       COGNIWORK_IP_HASH_PEPPER: ci-ip-pepper-not-for-production
+      COGNIWORK_OAUTH_STUB: "true"
+      COGNIWORK_VAULT_MASTER_KEY: ci-vault-master-key-not-for-production
     steps:
       - uses: actions/checkout@v4
 

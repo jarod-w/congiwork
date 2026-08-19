@@ -75,6 +75,8 @@ def export_user(
     consent_store: Any,
     audit: Any,
     settings_store: Any,
+    profile: Any | None = None,
+    tools: Any | None = None,
 ) -> dict[str, Any]:
     tasks = [
         {
@@ -113,6 +115,8 @@ def export_user(
         "authorizations": grants,
         "audit": list_audit(audit, str(user_id), 500),
         "settings": settings_out(settings_store.get(user_id)),
+        "profile": profile.export(user_id) if profile is not None else {"profiles": []},
+        "connections": tools.list_connections(user_id) if tools is not None else [],
     }
 
 
@@ -154,9 +158,15 @@ def delete_account_data(
     audit: Any,
     consent_store: Any,
     account_store: Any,
+    profile: Any | None = None,
+    tools: Any | None = None,
 ) -> dict[str, Any]:
     """除 consent_record 外全部物理删除；consent_record 匿名化保留（B1）。"""
     memories = memory.purge_all(user_id)
+    profiles = profile.purge(user_id) if profile is not None else 0
+    connections = 0
+    if tools is not None and hasattr(tools.store, "delete_for_user"):
+        connections = tools.store.delete_for_user(user_id)
     tasks = delete_tasks_for_user(task_store, user_id)
     settings_store.delete(user_id)
     if hasattr(approval_store, "delete_for_user"):
@@ -171,6 +181,8 @@ def delete_account_data(
         "deleted": {
             "memories": memories,
             "tasks": tasks,
+            "profiles": profiles,
+            "connections": connections,
             "account": True,
         },
         "consent_records_anonymized": anonymized,

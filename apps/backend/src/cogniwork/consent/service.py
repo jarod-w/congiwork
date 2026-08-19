@@ -129,3 +129,25 @@ class ConsentService:
             consent_text_version=consent_text_version,
             ip_hash=ip_hash,
         )
+
+    def revoke(
+        self,
+        *,
+        user_id: str,
+        scope_key: str,
+        surface: str,
+        consent_text_version: str | None = None,
+        ip_hash: str | None = None,
+    ) -> None:
+        """Disconnect writes a revoke record. Runtime still only checks via check()."""
+        spec = self._registry.get(scope_key)
+        version = consent_text_version or (spec.consent_text_version if spec else "1")
+        self._store.append(
+            user_id=user_id,
+            scope_key=scope_key,
+            action=ConsentAction.REVOKED,
+            always_allow=False,
+            surface=surface,
+            consent_text_version=version,
+            ip_hash=ip_hash,
+        )

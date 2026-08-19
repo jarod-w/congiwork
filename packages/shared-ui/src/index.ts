@@ -10,6 +10,8 @@ export { ConsentCard } from './ConsentCard';
 export { ApprovalCard } from './ApprovalCard';
 export { PrivacyCenter } from './PrivacyCenter';
 export { CaptureCard } from './CaptureCard';
+export { ProfilePage } from './ProfilePage';
+export { ConnectionManager } from './ConnectionManager';
 export type {
   ApprovalCardData,
   ArtifactItem,
@@ -21,3 +23,5 @@ export type {
   StepItem,
   TaskSummary,
 } from './types';
+export type { ProfileFieldView, InterviewQuestionView } from './ProfilePage';
+export type { ProviderView, ConnectionView, ActivityView } from './ConnectionManager';

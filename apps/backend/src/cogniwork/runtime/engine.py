@@ -39,6 +39,7 @@ class TaskEngine:
         settings: Settings | None = None,
         memory: Any | None = None,
         approvals: ApprovalService | None = None,
+        profile: Any | None = None,
     ) -> None:
         self.store = store
         self.events = events or InMemoryEventBroker()
@@ -47,6 +48,7 @@ class TaskEngine:
         self.tool_router = ToolRouter(self.tools, consent, audit)
         self.router = router or ModelRouter(self.settings)
         self.memory = memory
+        self.profile = profile
         self.approvals = approvals or ApprovalService()
         self.consent = consent
         self.step_limit = self.settings.task_step_limit
@@ -398,7 +400,35 @@ class TaskEngine:
             ],
             "pending_approval": pending,
             "blocked_scope": self._blocked_scope_card(task),
+            "profile_card": self._profile_card(user_id),
+            "pending_profile": self._pending_profile(user_id, task_id),
         }
+
+    def _profile_card(self, user_id: UUID) -> str:
+        profile = getattr(self, "profile", None)
+        if profile is None:
+            return ""
+        try:
+            return profile.render_card(user_id)
+        except Exception:
+            return ""
+
+    def _pending_profile(self, user_id: UUID, task_id: UUID) -> list[dict[str, Any]]:
+        profile = getattr(self, "profile", None)
+        if profile is None:
+            return []
+        active = profile.store.active_profile(user_id)
+        if active is None:
+            return []
+        from cogniwork.profile.models import FieldStatus
+        from cogniwork.profile.service import field_out
+
+        rows = []
+        for item in profile.store.list_fields(active.id, status=FieldStatus.PENDING):
+            evidence = item.evidence or {}
+            if str(evidence.get("task_id") or "") == str(task_id):
+                rows.append(field_out(item))
+        return rows[:3]
 
     def _blocked_scope_card(self, task: Task) -> dict[str, Any] | None:
         key = self.blocked_scopes.get(str(task.id))

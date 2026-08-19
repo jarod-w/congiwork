@@ -8,6 +8,8 @@ os.environ.setdefault("COGNIWORK_STORE_BACKEND", "memory")
 os.environ.setdefault("COGNIWORK_JWT_SECRET", "test-jwt-secret-32-bytes-minimum!!")
 os.environ.setdefault("COGNIWORK_IP_HASH_PEPPER", "test-ip-pepper")
 os.environ.setdefault("COGNIWORK_LLM_PROVIDER", "stub")
+os.environ.setdefault("COGNIWORK_OAUTH_STUB", "true")
+os.environ.setdefault("COGNIWORK_VAULT_MASTER_KEY", "test-vault-master-key-32bytes!!")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -59,6 +61,12 @@ def client():
             engine.used_memories.clear()
             engine.messages.clear()
             engine._cancel.clear()
+        profile_store = getattr(app.state, "profile_store", None)
+        if profile_store is not None and hasattr(profile_store, "clear"):
+            profile_store.clear()
+        tool_store = getattr(app.state, "tool_store", None)
+        if tool_store is not None and hasattr(tool_store, "clear"):
+            tool_store.clear()
         idem = getattr(app.state, "idempotency", None)
         if isinstance(idem, dict):
             idem.clear()

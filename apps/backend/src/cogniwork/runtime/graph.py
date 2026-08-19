@@ -91,6 +91,7 @@ def _prepare(runtime: Any, state: GraphState) -> GraphState:
         if uploaded:
             names.append(f"{uploaded.filename} ({uploaded.id})")
     memory_xml = ""
+    profile_xml = ""
     used = []
     memory = getattr(runtime, "memory", None)
     if memory is not None:
@@ -112,10 +113,16 @@ def _prepare(runtime: Any, state: GraphState) -> GraphState:
             runtime.used_memories[str(task.id)] = used
         except Exception:
             runtime.used_memories[str(task.id)] = []
+    profile = getattr(runtime, "profile", None)
+    if profile is not None:
+        try:
+            profile_xml = profile.render_card(task.user_id)
+        except Exception:
+            profile_xml = ""
     runtime.messages[str(task.id)] = [
         ChatMessage(
             "system",
-            _system_prompt(json.dumps(files), names, memory_xml),
+            _system_prompt(json.dumps(files), names, memory_xml, profile_xml),
         ),
         ChatMessage("user", str(task.input.get("message") or "")),
     ]
@@ -292,6 +299,23 @@ def _finalize(runtime: Any, state: GraphState) -> GraphState:
         except Exception:
             logger = __import__("logging").getLogger("cogniwork.runtime")
             logger.exception("memory finalize failed for %s", task.id)
+    profile = getattr(runtime, "profile", None)
+    if profile is not None and terminal == "succeeded":
+        try:
+            from cogniwork.profile.extract import drafts_from_task
+
+            for item in profile.propose(task.user_id, drafts_from_task(task)):
+                runtime.events.publish(
+                    str(task.id),
+                    "memory.candidate",
+                    memory_id=str(item.id),
+                    summary=item.key,
+                    type="profile",
+                    status=item.status.value,
+                )
+        except Exception:
+            logger = __import__("logging").getLogger("cogniwork.runtime")
+            logger.exception("profile finalize failed for %s", task.id)
     runtime.events.publish(str(task.id), "task.status", status=task.status.value)
     runtime.events.publish(
         str(task.id),
@@ -485,17 +509,21 @@ def _set_status(runtime: Any, task: Any, target: TaskStatus) -> None:
     runtime.store.save_task(task)
 
 
-def _system_prompt(file_ids_json: str, names: list[str], memory_xml: str = "") -> str:
+def _system_prompt(
+    file_ids_json: str, names: list[str], memory_xml: str = "", profile_xml: str = ""
+) -> str:
     listing = ", ".join(names) if names else "none"
     memory_block = f"\n{memory_xml}\n" if memory_xml else "\n"
+    profile_block = f"\n{profile_xml}\n" if profile_xml else ""
     return (
         "You are CogniWork, an AI coworker. Complete the user's task with the tools "
         "you have. Read uploaded files before writing artifacts. Do not claim you used "
         "a tool you do not have. Prefer builtin.write_artifact with "
         "generate=weekly_report when the user wants a weekly report from a spreadsheet."
-        f"{memory_block}"
+        f"{profile_block}{memory_block}"
+        "When a user profile is present, match its tone and tools. "
         "When memory is present, use it and mention the source. "
-        "Do not invent memories that are not listed.\n"
+        "Do not invent memories or profile facts that are not listed.\n"
         f"file_ids={file_ids_json}\n"
         f"uploaded={listing}\n"
     )
