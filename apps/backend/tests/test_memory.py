@@ -66,7 +66,7 @@ def test_hybrid_retrieve_prefers_relevant_memory():
     service.create(
         user,
         type=MemoryType.SEMANTIC,
-        content="The flagship product is CogniWork at $99 per seat.",
+        content="The list price is $99 per seat per month.",
         summary="Pricing",
     )
     service.create(
@@ -81,7 +81,7 @@ def test_hybrid_retrieve_prefers_relevant_memory():
         content="Write reports as tables, not long prose.",
         summary="Tables",
     )
-    bundle = service.retrieve(user, "What is our product pricing for a weekly report?")
+    bundle = service.retrieve(user, "What is our seat price for a weekly report?")
     texts = [row.item.content for row in bundle.facts + bundle.preferences]
     assert any("99" in text for text in texts)
     assert bundle.xml.startswith("<memory>")
