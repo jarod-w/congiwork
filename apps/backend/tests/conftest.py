@@ -44,6 +44,21 @@ def client():
         audit = getattr(app.state, "audit_log", None)
         if audit is not None and hasattr(audit, "clear"):
             audit.clear()
+        memory_store = getattr(app.state, "memory_store", None)
+        if memory_store is not None and hasattr(memory_store, "clear"):
+            memory_store.clear()
+        settings_store = getattr(app.state, "settings_store", None)
+        if settings_store is not None and hasattr(settings_store, "clear"):
+            settings_store.clear()
+        approval_store = getattr(app.state, "approval_store", None)
+        if approval_store is not None and hasattr(approval_store, "clear"):
+            approval_store.clear()
+        engine = getattr(app.state, "task_engine", None)
+        if engine is not None:
+            engine.pending_calls.clear()
+            engine.used_memories.clear()
+            engine.messages.clear()
+            engine._cancel.clear()
         idem = getattr(app.state, "idempotency", None)
         if isinstance(idem, dict):
             idem.clear()

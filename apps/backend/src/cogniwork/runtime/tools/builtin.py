@@ -62,7 +62,7 @@ WRITE_ARTIFACT = ToolSpec(
 SEARCH_MEMORY = ToolSpec(
     name="builtin.search_memory",
     provider="builtin",
-    description="Search the user's own memory. Returns nothing until Memory OS ships.",
+    description="Search the user's own memory for facts, preferences, and past tasks.",
     input_schema={
         "type": "object",
         "properties": {"query": {"type": "string"}},
@@ -102,11 +102,25 @@ class BuiltinExecutor:
         if spec.name == WRITE_ARTIFACT.name:
             return self._write(arguments, context)
         if spec.name == SEARCH_MEMORY.name:
+            memory = context.get("memory")
+            query = str(arguments.get("query") or "").strip()
+            if memory is None:
+                return ToolResult(
+                    spec.name,
+                    True,
+                    "No memories stored yet. Continue with the files and instructions "
+                    "you already have.",
+                )
+            bundle = memory.retrieve(UUID(str(context["user_id"])), query or " ")
+            rows = bundle.preferences + bundle.facts + bundle.past
+            if not rows:
+                return ToolResult(spec.name, True, "No matching memories.")
+            lines = [f"- ({row.item.type.value}) {row.item.content}" for row in rows]
             return ToolResult(
                 spec.name,
                 True,
-                "No memories stored yet. Continue with the files and instructions "
-                "you already have.",
+                "Memories:\n" + "\n".join(lines),
+                {"count": len(rows)},
             )
         if spec.name == ASK_USER.name:
             question = str(arguments.get("question") or "").strip()

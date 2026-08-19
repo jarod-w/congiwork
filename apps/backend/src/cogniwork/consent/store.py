@@ -75,6 +75,27 @@ class InMemoryConsentStore:
         """零授权 E2E（P0-07 §8.3）断言用：全程不应写出任何授权记录。"""
         return sum(1 for row in self._log if row["user_id"] == user_id)
 
+    def list_current(self, user_id: str) -> list[ConsentState]:
+        return [state for (uid, _scope), state in self._states.items() if uid == user_id]
+
+    def anonymize_user(self, user_id: str, replacement: UUID) -> int:
+        moved = 0
+        new_states: dict[tuple[str, str], ConsentState] = {}
+        for key, state in self._states.items():
+            if state.user_id == user_id:
+                replacement_id = str(replacement)
+                new_states[(replacement_id, state.scope_key)] = ConsentState(
+                    replacement_id, state.scope_key, state.action, state.always_allow
+                )
+                moved += 1
+            else:
+                new_states[key] = state
+        self._states = new_states
+        for row in self._log:
+            if row["user_id"] == user_id:
+                row["user_id"] = str(replacement)
+        return moved
+
     def clear(self) -> None:
         self._states.clear()
         self._log.clear()
@@ -144,6 +165,33 @@ class PostgresConsentStore:
                 (UUID(user_id),),
             ).fetchone()
         return int(row["n"]) if row else 0
+
+    def list_current(self, user_id: str) -> list[ConsentState]:
+        rows = self._load_current_rows(user_id)
+        return [
+            ConsentState(
+                user_id=user_id,
+                scope_key=row["scope_key"],
+                action=ConsentAction(row["action"]),
+                always_allow=bool(row["always_allow"]),
+            )
+            for row in rows
+        ]
+
+    def anonymize_user(self, user_id: str, replacement: UUID) -> int:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                UPDATE consent_record
+                SET user_id = %s
+                WHERE user_id = %s
+                """,
+                (replacement, UUID(user_id)),
+            )
+            conn.execute("REFRESH MATERIALIZED VIEW consent_current")
+            count = row.rowcount if row is not None else 0
+        self._invalidate(user_id)
+        return int(count or 0)
 
     def clear(self) -> None:
         """测试用。生产路径没有「清空授权」这种操作。"""

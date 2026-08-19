@@ -49,7 +49,18 @@ export function ContextPanel({ copy, bundle, open, onToggle, onDownload }: Props
           </section>
           <section>
             <h2>{copy.memories}</h2>
-            <p className="cw-muted">{copy.noneYet}</p>
+            {bundle?.memories.length ? (
+              <ul>
+                {bundle.memories.map((memory) => (
+                  <li key={memory.id}>
+                    <strong>{memory.summary || memory.type}</strong>
+                    <div className="cw-muted">{memory.content}</div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="cw-muted">{copy.noneYet}</p>
+            )}
           </section>
           <section>
             <h2>{copy.skills}</h2>

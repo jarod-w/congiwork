@@ -10,10 +10,12 @@ import threading
 from typing import Any
 from uuid import UUID
 
+from cogniwork.consent.models import ApprovalAction
 from cogniwork.core.clock import now
 from cogniwork.core.config import Settings, get_settings
 from cogniwork.core.errors import InvalidRequest, NotFound
 from cogniwork.core.ids import new_id
+from cogniwork.runtime.approvals import ApprovalService, PendingToolCall
 from cogniwork.runtime.events import InMemoryEventBroker
 from cogniwork.runtime.graph import compile_graph
 from cogniwork.runtime.llm.router import ModelRouter
@@ -35,6 +37,8 @@ class TaskEngine:
         tools: ToolRegistry | None = None,
         router: ModelRouter | None = None,
         settings: Settings | None = None,
+        memory: Any | None = None,
+        approvals: ApprovalService | None = None,
     ) -> None:
         self.store = store
         self.events = events or InMemoryEventBroker()
@@ -42,8 +46,14 @@ class TaskEngine:
         self.tools = tools or build_builtin_registry()
         self.tool_router = ToolRouter(self.tools, consent, audit)
         self.router = router or ModelRouter(self.settings)
+        self.memory = memory
+        self.approvals = approvals or ApprovalService()
+        self.consent = consent
         self.step_limit = self.settings.task_step_limit
         self.messages: dict[str, list] = {}
+        self.used_memories: dict[str, list] = {}
+        self.blocked_scopes: dict[str, str] = {}
+        self.pending_calls: dict[str, PendingToolCall] = {}
         self._cancel: set[str] = set()
         self._graph = compile_graph(self)
         self._lock = threading.Lock()
@@ -133,6 +143,7 @@ class TaskEngine:
                     "done": False,
                     "failed": False,
                     "cancel": False,
+                    "paused": False,
                 },
                 # 每次运行用新 thread，避免 MemorySaver 把 resume 当成已结束的图。
                 {"configurable": {"thread_id": str(new_id())}},
@@ -196,6 +207,155 @@ class TaskEngine:
         thread.start()
         return task
 
+    def resolve_approval(
+        self,
+        user_id: UUID,
+        approval_id: UUID,
+        action: ApprovalAction,
+        edited: dict[str, Any] | None = None,
+        surface: str = "web",
+    ) -> Task:
+        from cogniwork.runtime.graph import _finish_step, _set_status
+        from cogniwork.runtime.llm.types import ChatMessage
+        from cogniwork.runtime.models import StepStatus
+
+        item, args = self.approvals.resolve(user_id, approval_id, action, edited)
+        task = self.get(user_id, item.task_id)
+        pending = self.pending_calls.get(str(task.id))
+        self.events.publish(
+            str(task.id),
+            "approval.resolved",
+            approval_id=str(item.id),
+            action=action.value,
+        )
+        if action is ApprovalAction.ALWAYS_ALLOW_THIS_SCOPE and item.scope_key:
+            spec = self.consent._registry.get(item.scope_key)
+            version = spec.consent_text_version if spec else "1"
+            self.consent.grant(
+                user_id=str(user_id),
+                scope_key=item.scope_key,
+                skip_repeat_prompt=True,
+                surface=surface,
+                consent_text_version=version,
+            )
+        if action is ApprovalAction.REJECT:
+            if can_transition(task.status, TaskStatus.CANCELLED):
+                task.status = TaskStatus.CANCELLED
+                task.ended_at = now()
+                task.updated_at = now()
+                self.store.save_task(task)
+            self.events.publish(str(task.id), "task.status", status=task.status.value)
+            self.events.publish(str(task.id), "task.finished", status="cancelled")
+            self.events.close(str(task.id))
+            self.pending_calls.pop(str(task.id), None)
+            return task
+
+        if pending is None:
+            _set_status(self, task, TaskStatus.RUNNING)
+            return task
+
+        context = {
+            "store": self.store,
+            "user_id": str(task.user_id),
+            "task_id": str(task.id),
+            "step_id": str(pending.step_id),
+            "surface": task.surface.value,
+            "file_ids": task.input.get("file_ids") or [],
+            "memory": self.memory,
+        }
+        step = next((s for s in task.steps if s.id == pending.step_id), None)
+        started = now()
+        if action is ApprovalAction.SKIP:
+            if step is not None:
+                step.status = StepStatus.SKIPPED
+                self.store.save_step(step)
+            self.messages.setdefault(str(task.id), []).append(
+                ChatMessage(
+                    "tool",
+                    "The user skipped this step.",
+                    tool_call_id=pending.call_id,
+                    name=pending.tool_name,
+                )
+            )
+        else:
+            result = self.tool_router.execute_approved(
+                user_id=str(user_id),
+                name=pending.tool_name,
+                arguments=args,
+                context=context,
+                audit_result="approved",
+            )
+            if step is not None:
+                _finish_step(
+                    self,
+                    step,
+                    StepStatus.SUCCEEDED if result.ok else StepStatus.FAILED,
+                    None,
+                    {"ok": result.ok, "keys": sorted((result.data or {}).keys())},
+                    started,
+                    None if result.ok else {"message": result.content},
+                )
+            self.messages.setdefault(str(task.id), []).append(
+                ChatMessage(
+                    "tool",
+                    result.content,
+                    tool_call_id=pending.call_id,
+                    name=pending.tool_name,
+                )
+            )
+            if action is ApprovalAction.EDIT_AND_APPROVE and self.memory is not None:
+                from cogniwork.memory.extract import propose_from_edits
+
+                edits = []
+                for key, value in (edited or {}).items():
+                    edits.append(
+                        {
+                            "field": key,
+                            "before": (pending.arguments or {}).get(key),
+                            "after": value,
+                        }
+                    )
+                propose_from_edits(self.memory, user_id, edits, task.id)
+        self.pending_calls.pop(str(task.id), None)
+        _set_status(self, task, TaskStatus.RUNNING)
+        thread = threading.Thread(
+            target=self._continue_after_approval,
+            args=(task, pending.iteration),
+            daemon=True,
+            name=f"task-{task.id}-resume",
+        )
+        thread.start()
+        return task
+
+    def _continue_after_approval(self, task: Task, iteration: int) -> None:
+        from cogniwork.runtime.graph import _act, _after_act, _after_observe, _finalize, _observe
+
+        state = {
+            "task_id": str(task.id),
+            "user_id": str(task.user_id),
+            "iteration": iteration,
+            "done": False,
+            "failed": False,
+            "cancel": False,
+            "paused": False,
+        }
+        try:
+            state = _observe(self, state)
+            while True:
+                if _after_observe(state) == "finalize":
+                    _finalize(self, state)
+                    return
+                state = _act(self, state)
+                nxt = _after_act(state)
+                if nxt == "pause":
+                    return
+                if nxt == "finalize":
+                    _finalize(self, state)
+                    return
+                state = _observe(self, state)
+        except Exception:
+            logger.exception("task %s failed to resume after approval", task.id)
+
     def context_bundle(self, user_id: UUID, task_id: UUID) -> dict[str, Any]:
         task = self.get(user_id, task_id)
         artifacts = self.store.list_artifacts(user_id, task_id)
@@ -211,11 +371,20 @@ class TaskEngine:
                     }
                 )
         tools_used = sorted({s.title for s in task.steps if s.type.value == "tool"})
+        memories = self.used_memories.get(str(task.id), [])
+        pending = None
+        if task.status is TaskStatus.WAITING_APPROVAL:
+            req = self.approvals.store.pending_for_task(user_id, task_id)
+            if req is not None:
+                from cogniwork.runtime.approvals import approval_out
+
+                pending = approval_out(req)
+        scopes = sorted({s.scope_key for s in task.steps if s.scope_key})
         return {
-            "memories": [],
+            "memories": memories,
             "skills": [],
             "tools": tools_used,
-            "scopes": [],
+            "scopes": [key for key in scopes if key],
             "files": files,
             "artifacts": [
                 {
@@ -227,6 +396,31 @@ class TaskEngine:
                 }
                 for a in artifacts
             ],
+            "pending_approval": pending,
+            "blocked_scope": self._blocked_scope_card(task),
+        }
+
+    def _blocked_scope_card(self, task: Task) -> dict[str, Any] | None:
+        key = self.blocked_scopes.get(str(task.id))
+        if not key:
+            return None
+        from cogniwork.consent.registry import get_registry
+
+        spec = get_registry().get(key)
+        if spec is None:
+            return None
+        copy = spec.copy_for(self.settings.default_locale, self.settings.fallback_locale)
+        return {
+            "key": spec.key,
+            "trust_level": spec.trust_level.value,
+            "risk": spec.risk.value,
+            "consent_text_version": spec.consent_text_version,
+            "copy": {
+                "display_name": copy.display_name,
+                "collects": copy.collects,
+                "retention": copy.retention,
+                "degraded_behavior": copy.degraded_behavior,
+            },
         }
 
 

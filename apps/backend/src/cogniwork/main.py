@@ -21,6 +21,11 @@ from .core.db import open_pool
 from .core.errors import AppError, InvalidRequest, NotFound
 from .core.ids import new_trace_id
 from .core.redis import open_redis
+from .memory.embed import build_embedding_provider
+from .memory.service import MemoryService
+from .memory.settings import InMemorySettingsStore, PostgresSettingsStore
+from .memory.store import InMemoryMemoryStore, PostgresMemoryStore
+from .runtime.approvals import ApprovalService, InMemoryApprovalStore, PostgresApprovalStore
 from .runtime.digest import InMemoryAuditLog, PostgresAuditLog
 from .runtime.engine import TaskEngine
 from .runtime.events import InMemoryEventBroker, RedisEventBroker
@@ -44,6 +49,9 @@ async def lifespan(app: FastAPI):
         app.state.redis = None
         app.state.consent_store = InMemoryConsentStore()
         app.state.account_store = InMemoryAccountStore()
+        app.state.memory_store = InMemoryMemoryStore()
+        app.state.settings_store = InMemorySettingsStore()
+        app.state.approval_store = InMemoryApprovalStore()
     elif settings.store_backend == "postgres":
         pool = open_pool(settings)
         redis = open_redis(settings)
@@ -51,12 +59,16 @@ async def lifespan(app: FastAPI):
         app.state.redis = redis
         app.state.consent_store = PostgresConsentStore(pool, redis)
         app.state.account_store = PostgresAccountStore(pool)
+        app.state.memory_store = PostgresMemoryStore(pool)
+        app.state.settings_store = PostgresSettingsStore(pool)
+        app.state.approval_store = PostgresApprovalStore(pool)
     else:
         raise RuntimeError(f"unknown store_backend: {settings.store_backend!r}")
     app.state.auth_service = AuthService(app.state.account_store)
     app.state.consent_service = build_consent_service(
         app.state.consent_store, app.state.scope_registry
     )
+    _wire_memory(app)
     _wire_runtime(app)
     yield
     redis = getattr(app.state, "redis", None)
@@ -142,7 +154,21 @@ def _wire_runtime(app: FastAPI) -> None:
         consent=app.state.consent_service,
         audit=app.state.audit_log,
         settings=settings,
+        memory=app.state.memory,
+        approvals=app.state.approvals,
     )
+
+
+def _wire_memory(app: FastAPI) -> None:
+    settings = get_settings()
+    embeddings = build_embedding_provider(openai_api_key=settings.openai_api_key)
+    app.state.memory = MemoryService(
+        store=app.state.memory_store,
+        embeddings=embeddings,
+        consent_store=app.state.consent_store,
+        budget_tokens=settings.memory_budget_tokens,
+    )
+    app.state.approvals = ApprovalService(app.state.approval_store)
 
 
 app = create_app()

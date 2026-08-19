@@ -20,7 +20,7 @@ from cogniwork.runtime.models import UploadedFile
 
 router = APIRouter(tags=["files"])
 
-_ALLOWED_SUFFIXES = {".xlsx", ".csv", ".txt", ".md", ".json"}
+_ALLOWED_SUFFIXES = {".xlsx", ".csv", ".txt", ".md", ".json", ".pdf", ".docx"}
 
 
 def _engine(request: Request) -> TaskEngine:
@@ -40,7 +40,7 @@ def upload_file(
     suffix = _suffix(filename)
     if suffix not in _ALLOWED_SUFFIXES:
         raise InvalidRequest(
-            "This format is not supported yet. Use xlsx, csv, txt, md, or json.",
+            "This format is not supported yet. Use xlsx, csv, txt, md, json, pdf, or docx.",
             details={"filename": filename},
         )
     payload = file.file.read()
@@ -61,6 +61,33 @@ def upload_file(
     )
     _engine(request).store.put_file(uploaded)
     return file_meta(uploaded)
+
+
+@router.post("/files/{file_id}/ingest")
+def ingest_uploaded_file(
+    request: Request,
+    file_id: UUID,
+    account: Annotated[Account, Depends(require_account)],
+) -> dict[str, object]:
+    """显式「存入长期记忆」。上传本身不加 Scope，也不等于授权长期保存。"""
+    uploaded = _engine(request).store.get_file(account.id, file_id)
+    if uploaded is None:
+        raise NotFound("Uploaded file not found.")
+    from cogniwork.memory.ingest import ingest_file
+    from cogniwork.memory.service import memory_out
+
+    items = ingest_file(
+        request.app.state.memory,
+        account.id,
+        filename=uploaded.filename,
+        content=uploaded.content,
+        file_id=str(uploaded.id),
+    )
+    return {
+        "count": len(items),
+        "preview": [memory_out(item) for item in items[:5]],
+        "memories": [memory_out(item) for item in items],
+    }
 
 
 @router.get("/artifacts/{artifact_id}")

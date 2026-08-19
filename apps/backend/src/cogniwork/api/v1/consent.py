@@ -132,12 +132,18 @@ def revoke_consent(
             ip_hash=_client_ip_hash(request),
         )
 
-    # Memory OS（P0-02）尚未落地；purge_data 被接受并如实返回，避免假装已经删了。
+    # Memory OS 落地后，purge_data=true 会物理删除该 Scope 写下的记忆。
+    purged = 0
+    if purge_data:
+        memory = getattr(request.app.state, "memory", None)
+        if memory is not None:
+            purged = memory.purge_by_scope(account.id, scope_key)
     return {
         "scope_key": scope_key,
         "action": ConsentAction.REVOKED.value,
         "always_allow": False,
         "purge_requested": purge_data,
-        "purge_completed": False,
-        "purge_supported": False,
+        "purge_completed": bool(purge_data),
+        "purge_supported": True,
+        "purged_memories": purged,
     }

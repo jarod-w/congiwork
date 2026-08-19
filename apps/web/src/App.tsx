@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ApprovalCard,
+  CaptureCard,
   Composer,
+  ConsentCard,
   ContextPanel,
+  MemoryBrowser,
   MessageStream,
+  PrivacyCenter,
   TaskList,
   Timeline,
   WorkspaceShell,
+  type ApprovalCardData,
   type ContextBundle,
+  type MemoryItem,
+  type ScopeCard,
   type StepItem,
   type TaskSummary,
 } from '@cogniwork/shared-ui';
@@ -31,6 +39,8 @@ interface TaskDetail {
   artifacts: ContextBundle['artifacts'];
 }
 
+type View = 'workspace' | 'memory' | 'privacy';
+
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [token, setTokenState] = useState<string | null>(getToken());
@@ -44,9 +54,23 @@ export function App() {
   const [bundle, setBundle] = useState<ContextBundle | null>(null);
   const [draft, setDraft] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [saveToMemory, setSaveToMemory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [streamText, setStreamText] = useState('');
+  const [view, setView] = useState<View>('workspace');
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [pendingMemories, setPendingMemories] = useState<MemoryItem[]>([]);
+  const [memoryTab, setMemoryTab] = useState<'semantic' | 'preference' | 'episodic' | 'pending'>('semantic');
+  const [memoryDraft, setMemoryDraft] = useState('');
+  const [privacy, setPrivacy] = useState<{
+    authorizations: { scope_key: string; action: string; display_name: string; trust_level: string | null; risk: string | null }[];
+    activity: { id: string; summary: string; created_at: string }[];
+    data: { memories: number; tasks: number; files: number };
+    markets: string;
+    cleanup: boolean;
+  } | null>(null);
+  const [blockedScope, setBlockedScope] = useState<ScopeCard | null>(null);
   const deltaRef = useRef('');
   const frameRef = useRef<number | null>(null);
 
@@ -67,6 +91,16 @@ export function App() {
   }, [token]);
 
   useEffect(() => {
+    if (!token || view !== 'memory') return;
+    void refreshMemories();
+  }, [token, view, memoryTab]);
+
+  useEffect(() => {
+    if (!token || view !== 'privacy') return;
+    void refreshPrivacy();
+  }, [token, view]);
+
+  useEffect(() => {
     if (!token || !activeId) return;
     const controller = new AbortController();
     deltaRef.current = '';
@@ -75,7 +109,10 @@ export function App() {
       setDetail(task);
       if (task.result?.summary) setStreamText(task.result.summary);
     });
-    void api<ContextBundle>(`/api/v1/tasks/${activeId}/context`).then(setBundle);
+    void api<ContextBundle>(`/api/v1/tasks/${activeId}/context`).then((next) => {
+      setBundle(next);
+      if (next.blocked_scope) setBlockedScope(next.blocked_scope);
+    });
     const session = connectTaskEvents(
       activeId,
       token,
@@ -91,10 +128,21 @@ export function App() {
               });
             }
           }
-          if (event.event === 'task.status' || event.event === 'task.finished' || event.event === 'artifact.created') {
+          if (
+            event.event === 'task.status' ||
+            event.event === 'task.finished' ||
+            event.event === 'artifact.created' ||
+            event.event === 'approval.requested' ||
+            event.event === 'memory.candidate' ||
+            event.event === 'tool.result'
+          ) {
             void api<TaskDetail>(`/api/v1/tasks/${activeId}`).then(setDetail);
-            void api<ContextBundle>(`/api/v1/tasks/${activeId}/context`).then(setBundle);
+            void api<ContextBundle>(`/api/v1/tasks/${activeId}/context`).then((next) => {
+              setBundle(next);
+              if (next.blocked_scope) setBlockedScope(next.blocked_scope);
+            });
             void refreshTasks();
+            void refreshMemories();
           }
         },
       },
@@ -109,6 +157,34 @@ export function App() {
   async function refreshTasks() {
     const body = await api<{ tasks: TaskSummary[] }>('/api/v1/tasks');
     setTasks(body.tasks);
+  }
+
+  async function refreshMemories() {
+    const pending = await api<{ memories: MemoryItem[] }>('/api/v1/memories/pending');
+    setPendingMemories(pending.memories);
+    if (memoryTab === 'pending') {
+      setMemories(pending.memories);
+      return;
+    }
+    const body = await api<{ memories: MemoryItem[] }>(`/api/v1/memories?type=${memoryTab}&status=active`);
+    setMemories(body.memories);
+  }
+
+  async function refreshPrivacy() {
+    const overview = await api<{
+      authorizations: { scope_key: string; action: string; display_name: string; trust_level: string | null; risk: string | null }[];
+      data: { memories: number; tasks: number; files: number };
+      settings: { episodic_auto_cleanup: boolean };
+      boundaries: { markets: string };
+    }>('/api/v1/privacy');
+    const audit = await api<{ events: { id: string; summary: string; created_at: string }[] }>('/api/v1/privacy/audit');
+    setPrivacy({
+      authorizations: overview.authorizations,
+      activity: audit.events,
+      data: overview.data,
+      markets: overview.boundaries.markets,
+      cleanup: overview.settings.episodic_auto_cleanup,
+    });
   }
 
   async function authenticate(path: '/api/v1/auth/register' | '/api/v1/auth/login') {
@@ -134,9 +210,12 @@ export function App() {
       if (file) {
         const data = new FormData();
         data.append('file', file);
-        data.append('persist', 'false');
+        data.append('persist', saveToMemory ? 'true' : 'false');
         const uploaded = await api<{ id: string }>('/api/v1/files', { method: 'POST', body: data });
         fileIds = [uploaded.id];
+        if (saveToMemory) {
+          await api(`/api/v1/files/${uploaded.id}/ingest`, { method: 'POST' });
+        }
       }
       const created = await api<TaskDetail>('/api/v1/tasks', {
         method: 'POST',
@@ -144,7 +223,9 @@ export function App() {
       });
       setDraft('');
       setFile(null);
+      setSaveToMemory(false);
       setActiveId(created.id);
+      setView('workspace');
       await refreshTasks();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed');
@@ -152,6 +233,9 @@ export function App() {
       setBusy(false);
     }
   }
+
+  const approval: ApprovalCardData | null = bundle?.pending_approval ?? null;
+  const blocked = blockedScope ?? bundle?.blocked_scope ?? null;
 
   if (!token) {
     return (
@@ -195,61 +279,194 @@ export function App() {
 
   return (
     <WorkspaceShell
-      panelOpen={panelOpen}
+      panelOpen={panelOpen && view === 'workspace'}
       sidebar={
-        <TaskList
-          copy={copy}
-          tasks={tasks}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onNew={() => {
-            setActiveId(null);
-            setDetail(null);
-            setBundle(null);
-            setStreamText('');
-          }}
-        />
+        <>
+          <nav className="cw-nav">
+            <button type="button" className={view === 'workspace' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('workspace')}>
+              {copy.workspace}
+            </button>
+            <button type="button" className={view === 'memory' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('memory')}>
+              {copy.memory}
+            </button>
+            <button type="button" className={view === 'privacy' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('privacy')}>
+              {copy.privacy}
+            </button>
+          </nav>
+          {view === 'workspace' ? (
+            <TaskList
+              copy={copy}
+              tasks={tasks}
+              activeId={activeId}
+              onSelect={setActiveId}
+              onNew={() => {
+                setActiveId(null);
+                setDetail(null);
+                setBundle(null);
+                setStreamText('');
+              }}
+            />
+          ) : null}
+        </>
       }
       main={
-        <div className="cw-thread">
-          <header className="cw-thread-head">
-            <div>
-              <h1>{detail?.title || copy.newTask}</h1>
-              <p className="cw-muted">{copy.dropHint}</p>
-            </div>
-            <button
-              type="button"
-              className="cw-btn cw-btn-ghost"
-              onClick={() => {
+        view === 'memory' ? (
+          <MemoryBrowser
+            copy={copy}
+            items={memories}
+            pending={pendingMemories}
+            tab={memoryTab}
+            draft={memoryDraft}
+            onTab={setMemoryTab}
+            onDraft={setMemoryDraft}
+            onRemember={() => {
+              void api('/api/v1/memories', {
+                method: 'POST',
+                body: JSON.stringify({ type: 'semantic', content: memoryDraft }),
+              }).then(() => {
+                setMemoryDraft('');
+                void refreshMemories();
+              });
+            }}
+            onConfirm={(id, accept) => {
+              void api(`/api/v1/memories/${id}/confirm`, {
+                method: 'POST',
+                body: JSON.stringify({ action: accept ? 'accept' : 'reject' }),
+              }).then(() => void refreshMemories());
+            }}
+            onDelete={(id) => {
+              void api(`/api/v1/memories/${id}`, { method: 'DELETE' }).then(() => void refreshMemories());
+            }}
+            onDeleteAll={() => {
+              void api('/api/v1/memories?all=true', { method: 'DELETE' }).then(() => void refreshMemories());
+            }}
+          />
+        ) : view === 'privacy' && privacy ? (
+          <PrivacyCenter
+            copy={copy}
+            grants={privacy.authorizations}
+            activity={privacy.activity}
+            data={privacy.data}
+            markets={privacy.markets}
+            cleanup={privacy.cleanup}
+            onCleanup={(value) => {
+              void api('/api/v1/privacy/settings', {
+                method: 'PATCH',
+                body: JSON.stringify({ episodic_auto_cleanup: value }),
+              }).then(() => void refreshPrivacy());
+            }}
+            onRevoke={(scope) => {
+              void api(`/api/v1/consent/${scope}`, { method: 'DELETE' }).then(() => void refreshPrivacy());
+            }}
+            onExport={() => {
+              void api('/api/v1/privacy/export').then((body) => {
+                const blob = new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = 'cogniwork-export.json';
+                anchor.click();
+                URL.revokeObjectURL(url);
+              });
+            }}
+            onDeleteAccount={() => {
+              void api('/api/v1/privacy/account', { method: 'DELETE' }).then(() => {
                 clearToken();
                 setTokenState(null);
-              }}
-            >
-                {copy.signOut}
-            </button>
-          </header>
-          {error ? <p className="cw-error">{error}</p> : null}
-          {detail ? (
-            <>
-              <article className="cw-message is-user">
-                <pre>{detail.input.message}</pre>
-              </article>
-              <Timeline copy={copy} steps={detail.steps} />
-              <MessageStream text={streamText || detail.result?.summary || ''} />
-            </>
-          ) : (
-            <p className="cw-muted">{copy.emptyTasks}</p>
-          )}
-          <Composer
-            copy={copy}
-            value={draft}
-            busy={busy}
-            fileName={file?.name ?? null}
-            onChange={setDraft}
-            onFile={setFile}
-            onSubmit={() => void submitTask()}
+              });
+            }}
           />
-        </div>
+        ) : (
+          <div className="cw-thread">
+            <header className="cw-thread-head">
+              <div>
+                <h1>{detail?.title || copy.newTask}</h1>
+                <p className="cw-muted">{copy.dropHint}</p>
+              </div>
+              <button
+                type="button"
+                className="cw-btn cw-btn-ghost"
+                onClick={() => {
+                  clearToken();
+                  setTokenState(null);
+                }}
+              >
+                {copy.signOut}
+              </button>
+            </header>
+            {error ? <p className="cw-error">{error}</p> : null}
+            {detail ? (
+              <>
+                <article className="cw-message is-user">
+                  <pre>{detail.input.message}</pre>
+                </article>
+                <Timeline copy={copy} steps={detail.steps} />
+                {approval ? (
+                  <ApprovalCard
+                    copy={copy}
+                    approval={approval}
+                    onResolve={(action, edited) => {
+                      void api(`/api/v1/approvals/${approval.approval_id}/resolve`, {
+                        method: 'POST',
+                        body: JSON.stringify({ action, edited }),
+                      }).then(() => {
+                        void api<TaskDetail>(`/api/v1/tasks/${activeId}`).then(setDetail);
+                        if (activeId) void api<ContextBundle>(`/api/v1/tasks/${activeId}/context`).then(setBundle);
+                      });
+                    }}
+                  />
+                ) : null}
+                {blocked ? (
+                  <ConsentCard
+                    copy={copy}
+                    scope={blocked}
+                    onEnable={() => {
+                      void api('/api/v1/consent', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          scope_key: blocked.key,
+                          consent_text_version: blocked.consent_text_version,
+                          always_allow: true,
+                        }),
+                      }).then(() => setBlockedScope(null));
+                    }}
+                    onSkip={() => setBlockedScope(null)}
+                  />
+                ) : null}
+                <MessageStream text={streamText || detail.result?.summary || ''} />
+                <CaptureCard
+                  copy={copy}
+                  items={pendingMemories.filter((item) => item.source_ref && (item.source_ref as { task_id?: string }).task_id === detail.id)}
+                  onKeep={() => {
+                    pendingMemories
+                      .filter((item) => (item.source_ref as { task_id?: string } | null)?.task_id === detail.id)
+                      .forEach((item) => {
+                        void api(`/api/v1/memories/${item.id}/confirm`, {
+                          method: 'POST',
+                          body: JSON.stringify({ action: 'accept' }),
+                        });
+                      });
+                    void refreshMemories();
+                  }}
+                  onSkip={() => undefined}
+                />
+              </>
+            ) : (
+              <p className="cw-muted">{copy.emptyTasks}</p>
+            )}
+            <Composer
+              copy={copy}
+              value={draft}
+              busy={busy}
+              fileName={file?.name ?? null}
+              saveToMemory={saveToMemory}
+              onChange={setDraft}
+              onFile={setFile}
+              onSaveToMemory={setSaveToMemory}
+              onSubmit={() => void submitTask()}
+            />
+          </div>
+        )
       }
       panel={
         <ContextPanel

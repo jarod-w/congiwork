@@ -47,6 +47,20 @@ class ConsentDecision(StrEnum):
     DENY = "deny"
 
 
+class ApprovalAction(StrEnum):
+    """用户对 ApprovalRequest 的动作（00-conventions.md §4）。
+
+    字面量留在本文件：运行时其它模块如果写出 always_allow，
+    会被无旁路守护当成第二条判定路径。审批 API 用这个枚举，不写字面量。
+    """
+
+    APPROVE = "approve"
+    EDIT_AND_APPROVE = "edit_and_approve"
+    REJECT = "reject"
+    ALWAYS_ALLOW_THIS_SCOPE = "always_allow_this_scope"
+    SKIP = "skip"
+
+
 @dataclass(frozen=True, slots=True)
 class ScopeCopy:
     """一个 Scope 面向用户的四段文案。
@@ -112,3 +126,8 @@ class ConsentState:
     @property
     def is_granted(self) -> bool:
         return self.action is ConsentAction.GRANTED
+
+    @property
+    def skip_repeat_prompt(self) -> bool:
+        """面向隐私中心的叫法。字段本身仍是 always_allow。"""
+        return self.always_allow

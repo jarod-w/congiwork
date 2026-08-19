@@ -80,6 +80,14 @@ class InMemoryAuditLog:
     def clear(self) -> None:
         self.rows.clear()
 
+    def list_for_user(self, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        found = [row for row in self.rows if row["user_id"] == user_id]
+        found.sort(key=lambda row: row["created_at"], reverse=True)
+        return found[:limit]
+
+    def delete_for_user(self, user_id: str) -> None:
+        self.rows = [row for row in self.rows if row["user_id"] != user_id]
+
 
 class PostgresAuditLog:
     def __init__(self, pool: Any) -> None:
@@ -129,6 +137,35 @@ class PostgresAuditLog:
     def clear(self) -> None:
         with self._pool.connection() as conn:
             conn.execute("TRUNCATE execution_audit")
+
+    def list_for_user(self, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, user_id, task_id, step_id, scope_key, surface, action,
+                       target_digest, result, error_code, duration_ms, created_at
+                FROM execution_audit
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (UUID(user_id), limit),
+            ).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["id"] = str(item["id"])
+            item["user_id"] = str(item["user_id"])
+            if item.get("task_id"):
+                item["task_id"] = str(item["task_id"])
+            if item.get("step_id"):
+                item["step_id"] = str(item["step_id"])
+            out.append(item)
+        return out
+
+    def delete_for_user(self, user_id: str) -> None:
+        with self._pool.connection() as conn:
+            conn.execute("DELETE FROM execution_audit WHERE user_id = %s", (UUID(user_id),))
 
 
 def _audit_surface(surface: str) -> str:
