@@ -24,7 +24,12 @@ def _save(client, headers, body: dict) -> dict:
 def test_presets_have_four_zero_auth_and_no_connector_names():
     presets = load_presets()
     assert len(presets) == 5
-    zero = [item for item in presets if not item["required_scopes"]]
+    zero = [
+        item
+        for item in presets
+        if not item["required_scopes"]
+        and not any(step.get("needs_clarification") for step in item["workflow"])
+    ]
     assert len(zero) == 4
     blob = str(presets).lower()
     for name in ("gmail", "slack", "notion", "github", "hubspot"):

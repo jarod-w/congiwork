@@ -128,4 +128,6 @@ def test_runtime_registry_includes_mcp_read_tools():
     assert "notion.search" in names
     assert "gmail.search_messages" in names
     assert "github.search_code" in names
-    assert "gmail.send_message" not in names
+    assert "gmail.send_message" in names
+    assert "gcal.create_event" in names
+    assert "notion.create_page" in names

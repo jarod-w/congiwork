@@ -81,7 +81,14 @@ def _allowed_tools(connected: list[str] | None) -> set[str]:
         extra = {name for name in connected if name in names}
         if extra:
             return extra
-    return names
+    # Unconnected drafts must not bind a sender. Phase 1 has several possible
+    # send tools; naming one would force a content rev if that connector slips.
+    return {
+        tool.name
+        for provider in catalog.providers
+        for tool in provider.tools
+        if tool.risk.value == "read"
+    }
 
 
 def _llm_draft(text: str, allowed: set[str], llm: Any) -> dict[str, Any] | None:
@@ -280,8 +287,9 @@ def _pick_tool(
         for tool in provider.tools:
             if tool.name not in allowed:
                 continue
-            if send and tool.risk.value == "irreversible":
-                return tool.name
+            if send:
+                # Leave send unbound. The editor must render an unset tool.
+                return None
             if read and tool.risk.value == "read" and provider.id in lowered:
                 return tool.name
     if read:
