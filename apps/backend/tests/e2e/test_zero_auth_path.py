@@ -2,8 +2,8 @@
 
 注册 → 跳过全部访谈 → 上传 xlsx → 发起「整理成周报」→ 拿到产物 → 下载
 
+访谈（P0-01）可全程跳过。本测试显式 POST /profile/interview/skip 后再走上传路径，
 全程 consent_record 必须为空。这条挂了等同 P0 缺陷（硬约束 5）。
-访谈（P0-01）本阶段尚未落地，因此「跳过」= 注册后不被要求进入访谈。
 """
 
 from __future__ import annotations
@@ -60,9 +60,15 @@ def test_zero_auth_weekly_report_path(client):
     user_id = register.json()["account"]["id"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 注册后即可派活：没有访谈闸门。
+    # 注册后即可派活：访谈可跳过，且不是闸门。
     me = client.get(f"{prefix}/auth/me", headers=headers)
     assert me.status_code == 200
+    skipped = client.post(
+        f"{prefix}/profile/interview/skip",
+        headers=headers,
+        json={"scope": "all"},
+    )
+    assert skipped.status_code == 200, skipped.text
 
     upload = client.post(
         f"{prefix}/files",
@@ -101,6 +107,10 @@ def test_zero_auth_weekly_report_path(client):
     assert download.status_code == 200
     assert len(download.content) > 0
     assert "attachment" in download.headers.get("content-disposition", "")
+
+    ctx = client.get(f"{prefix}/tasks/{task_id}/context", headers=headers)
+    assert ctx.status_code == 200
+    assert not (ctx.json().get("profile_card") or "")
 
     store = client.app.state.consent_store
     assert store.record_count(user_id) == 0, "zero-auth path must not write consent_record"

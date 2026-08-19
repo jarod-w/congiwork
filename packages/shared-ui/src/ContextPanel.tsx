@@ -24,6 +24,14 @@ export function ContextPanel({ copy, bundle, open, onToggle, onDownload }: Props
       {open ? (
         <>
           <section>
+            <h2>{copy.profile}</h2>
+            {bundle?.profile_card ? (
+              <pre className="cw-muted">{bundle.profile_card}</pre>
+            ) : (
+              <p className="cw-muted">{copy.noneYet}</p>
+            )}
+          </section>
+          <section>
             <h2>{copy.files}</h2>
             {bundle?.files.length ? (
               <ul>

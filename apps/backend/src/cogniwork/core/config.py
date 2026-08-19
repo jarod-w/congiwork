@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     model_routes_path: str = ""
     memory_budget_tokens: int = 2000
 
+    # ── 凭据保险箱 / OAuth（P0-05）──
+    vault_master_key: str = "dev-only-vault-master-key-change-me!!"
+    oauth_stub: bool = False
+    public_base_url: str = "http://localhost:8000"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    notion_client_id: str = ""
+    notion_client_secret: str = ""
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    mcp_transport: str = "inprocess"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

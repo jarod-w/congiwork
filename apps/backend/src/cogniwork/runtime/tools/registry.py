@@ -34,3 +34,14 @@ def build_builtin_registry() -> ToolRegistry:
     for spec in BUILTIN_TOOLS:
         registry.register(spec, executor)
     return registry
+
+
+def build_runtime_registry(mcp_executor: Executor | None = None) -> ToolRegistry:
+    registry = build_builtin_registry()
+    if mcp_executor is None:
+        return registry
+    from cogniwork.tools.catalog import load_catalog
+
+    for spec in load_catalog().specs():
+        registry.register(spec, mcp_executor)
+    return registry

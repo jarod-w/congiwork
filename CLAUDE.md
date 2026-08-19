@@ -14,15 +14,17 @@ apps/backend/             ✅ core/ + consent/ + auth/ + runtime/ + api/v1
   src/cogniwork/consent/    Scope 注册表 + ConsentService + Postgres/Redis store
   src/cogniwork/auth/       注册/登录、Bearer JWT
   src/cogniwork/runtime/    TaskEngine 门面、LangGraph、builtin 工具、SSE、LLM 路由
+  src/cogniwork/profile/    个人画像 + 访谈状态机 + 注入缓存
+  src/cogniwork/tools/      MCP Client、Vault、OAuth、连接器适配器
   src/cogniwork/migrate.py  SQL 迁移工具
-  migrations/               0001_consent.sql + 0002_account.sql + 0003_task.sql
+  migrations/               0001–0006（consent / account / task / memory / profile / tools）
   tests/guards/           ✅ 硬约束的可执行形式，见下
   tests/e2e/              ✅ 零授权核心路径（P0-07 §8.3）
 packages/shared-types/    ✅ 错误码、SSE 事件、审批动作
 packages/shared-ui/       ✅ 工作台展示组件（无网络/路由）
-apps/web/                 ✅ 任务工作台（三栏 + SSE + 上传/产物）
+apps/web/                 ✅ 任务工作台（三栏 + SSE + 上传/产物 + 画像/连接）
 apps/desktop-shell/       ⬜ 未创建
-packages/mcp-connectors/  ⬜ 空目录
+packages/mcp-connectors/  ✅ stdio 入口说明（实现在 backend tools/）
 ```
 
 本地桌面自动化 Agent 在**独立仓库** `cogniwork-desktop-agent`（独立版本、签名、分发节奏）。
@@ -52,6 +54,8 @@ pnpm --filter @cogniwork/web dev
 | `test_consent_invariants.py` | `irreversible` 永远逐次审批、默认全部 DENY、撤销即失效、授权互不牵连 |
 | `test_no_bypass.py` | 检查点唯一（静态扫描）、语言不硬编码、主键不用 uuid4、时间不用 naive utcnow |
 | `test_cross_language_contracts.py` | 后端与 `shared-types` 的错误码/风险词表一致、前端不得复制 Scope 列表 |
+| `test_no_credential_leak.py` | 凭据不进日志/trace/错误上报（硬约束 9） |
+| `test_oauth_scope_minimization.py` | OAuth 请求范围不得超出已开启 Scope 对应的最小集合 |
 
 **这些挂了不是「测试写得不好」，是违反了硬约束。改测试之前先改硬约束，反过来不行。**
 

@@ -25,11 +25,18 @@ from .memory.embed import build_embedding_provider
 from .memory.service import MemoryService
 from .memory.settings import InMemorySettingsStore, PostgresSettingsStore
 from .memory.store import InMemoryMemoryStore, PostgresMemoryStore
+from .profile.service import ProfileService
+from .profile.store import InMemoryProfileStore, PostgresProfileStore
 from .runtime.approvals import ApprovalService, InMemoryApprovalStore, PostgresApprovalStore
 from .runtime.digest import InMemoryAuditLog, PostgresAuditLog
 from .runtime.engine import TaskEngine
 from .runtime.events import InMemoryEventBroker, RedisEventBroker
 from .runtime.store import InMemoryTaskStore, PostgresTaskStore
+from .runtime.tools.registry import build_runtime_registry
+from .tools.executor import McpExecutor
+from .tools.http import StubTransport
+from .tools.service import ToolService
+from .tools.store import InMemoryToolStore, PostgresToolStore
 
 
 @asynccontextmanager
@@ -52,6 +59,8 @@ async def lifespan(app: FastAPI):
         app.state.memory_store = InMemoryMemoryStore()
         app.state.settings_store = InMemorySettingsStore()
         app.state.approval_store = InMemoryApprovalStore()
+        app.state.profile_store = InMemoryProfileStore()
+        app.state.tool_store = InMemoryToolStore()
     elif settings.store_backend == "postgres":
         pool = open_pool(settings)
         redis = open_redis(settings)
@@ -62,6 +71,8 @@ async def lifespan(app: FastAPI):
         app.state.memory_store = PostgresMemoryStore(pool)
         app.state.settings_store = PostgresSettingsStore(pool)
         app.state.approval_store = PostgresApprovalStore(pool)
+        app.state.profile_store = PostgresProfileStore(pool)
+        app.state.tool_store = PostgresToolStore(pool)
     else:
         raise RuntimeError(f"unknown store_backend: {settings.store_backend!r}")
     app.state.auth_service = AuthService(app.state.account_store)
@@ -69,6 +80,8 @@ async def lifespan(app: FastAPI):
         app.state.consent_store, app.state.scope_registry
     )
     _wire_memory(app)
+    _wire_profile(app)
+    _wire_tools(app)
     _wire_runtime(app)
     yield
     redis = getattr(app.state, "redis", None)
@@ -148,6 +161,7 @@ def _wire_runtime(app: FastAPI) -> None:
         app.state.audit_log = PostgresAuditLog(app.state.db_pool)
         redis = app.state.redis
         app.state.event_broker = RedisEventBroker(redis, memory_events) if redis else memory_events
+    app.state.tools.audit = app.state.audit_log
     app.state.task_engine = TaskEngine(
         store=app.state.task_store,
         events=app.state.event_broker,
@@ -156,6 +170,8 @@ def _wire_runtime(app: FastAPI) -> None:
         settings=settings,
         memory=app.state.memory,
         approvals=app.state.approvals,
+        profile=app.state.profile,
+        tools=build_runtime_registry(app.state.mcp_executor),
     )
 
 
@@ -169,6 +185,22 @@ def _wire_memory(app: FastAPI) -> None:
         budget_tokens=settings.memory_budget_tokens,
     )
     app.state.approvals = ApprovalService(app.state.approval_store)
+
+
+def _wire_profile(app: FastAPI) -> None:
+    app.state.profile = ProfileService(app.state.profile_store, redis=app.state.redis)
+
+
+def _wire_tools(app: FastAPI) -> None:
+    settings = get_settings()
+    transport = StubTransport() if settings.oauth_stub else None
+    app.state.tools = ToolService(
+        app.state.tool_store,
+        settings=settings,
+        transport=transport,
+        consent=app.state.consent_service,
+    )
+    app.state.mcp_executor = McpExecutor(app.state.tools, transport=app.state.tools.transport)
 
 
 app = create_app()

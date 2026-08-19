@@ -1,0 +1,179 @@
+# Interview question bank (P0-01 §5.1.1).
+# Semantic keys are stable. User-facing wording is chosen at runtime from
+# settings.default_locale — never hardcode a language in application code (A8).
+#
+# Phrasing rules (review checklist):
+#   1. Ask what they want help with, not for a job description.
+#   2. Never ask KPIs, seniority, reporting lines, salary, or performance.
+#   3. Preference questions offer examples; users pick rather than describe style.
+#   4. Every skippable question has an explicit skip, and skip does not ask why.
+
+version: 1
+
+card_labels:
+  role: {en-US: Role, zh-CN: 角色}
+  industry: {en-US: Industry, zh-CN: 行业}
+  company_context: {en-US: Company background, zh-CN: 公司背景}
+  business_goals: {en-US: Current goals, zh-CN: 当前目标}
+  tools: {en-US: Tools you use, zh-CN: 常用工具}
+  recurring_deliverables: {en-US: Recurring deliverables, zh-CN: 固定交付物}
+  preferences.writing_tone: {en-US: Writing tone, zh-CN: 写作语气}
+  preferences.output_format: {en-US: Output format, zh-CN: 输出形式}
+  preferences.language: {en-US: Language, zh-CN: 语言}
+  working_hours: {en-US: Working hours, zh-CN: 工作时间}
+  custom.sub_function: {en-US: Focus area, zh-CN: 细分方向}
+  custom.report_outline: {en-US: Report outline, zh-CN: 报告结构}
+
+source_labels:
+  interview: {en-US: From the interview, zh-CN: 访谈}
+  manual: {en-US: You wrote this, zh-CN: 你手动填写}
+  extracted: {en-US: Learned from a task, zh-CN: 从任务中学到}
+
+questions:
+  - key: role
+    round: 1
+    required: true
+    extracts: [role, custom.sub_function]
+    prompt:
+      en-US: What do you spend most of your time on right now?
+      zh-CN: 你现在主要负责哪一块？
+    options:
+      - id: content
+        labels: {en-US: Content, zh-CN: 内容}
+      - id: events
+        labels: {en-US: Events, zh-CN: 活动}
+      - id: growth
+        labels: {en-US: Growth and paid, zh-CN: 增长投放}
+      - id: lifecycle
+        labels: {en-US: Lifecycle / user ops, zh-CN: 用户运营}
+      - id: brand
+        labels: {en-US: Brand, zh-CN: 品牌}
+      - id: general
+        labels: {en-US: Full-stack marketing, zh-CN: 综合市场}
+
+  - key: company
+    round: 1
+    required: true
+    extracts: [industry, company_context]
+    prompt:
+      en-US: What does the company do, and who do you sell to?
+      zh-CN: 你们公司做什么业务，主要卖给谁？
+
+  - key: first_task
+    round: 1
+    required: true
+    extracts: [business_goals]
+    starts_task: true
+    prompt:
+      en-US: If someone could take one thing off your plate this week, what would it be?
+      zh-CN: 最近有什么事，如果能有人替你做，你最想交出去？
+
+  - key: recurring_deliverables
+    round: 2
+    required: false
+    extracts: [recurring_deliverables]
+    prompt:
+      en-US: What do you have to turn in every week or month?
+      zh-CN: 每周或每月你固定要交的东西有哪些？
+    options:
+      - id: weekly_report
+        labels: {en-US: Weekly report, zh-CN: 周报}
+      - id: monthly_report
+        labels: {en-US: Monthly report, zh-CN: 月报}
+      - id: quarterly_review
+        labels: {en-US: Quarterly review, zh-CN: 季度复盘}
+      - id: content_calendar
+        labels: {en-US: Content calendar, zh-CN: 内容排期}
+      - id: campaign_brief
+        labels: {en-US: Campaign brief, zh-CN: 活动方案}
+      - id: dashboard
+        labels: {en-US: Dashboard, zh-CN: 数据看板}
+
+  - key: tools
+    round: 2
+    required: false
+    extracts: [tools]
+    prompt:
+      en-US: Where does that work actually happen?
+      zh-CN: 这些活主要在哪几个工具里干？
+    options:
+      - id: sheets
+        labels: {en-US: Spreadsheets (Excel / Google Sheets), zh-CN: 表格（Excel / Google Sheets）}
+      - id: docs
+        labels: {en-US: Docs (Google Docs / Notion), zh-CN: 文档（Docs / Notion）}
+      - id: email
+        labels: {en-US: Email, zh-CN: 邮箱}
+      - id: slack
+        labels: {en-US: Slack, zh-CN: Slack}
+      - id: crm
+        labels: {en-US: CRM, zh-CN: CRM}
+      - id: analytics
+        labels: {en-US: Analytics, zh-CN: 数据分析}
+      - id: ads
+        labels: {en-US: Ad platforms, zh-CN: 广告后台}
+
+  - key: output_format
+    round: 2
+    required: false
+    extracts: [preferences.output_format]
+    prompt:
+      en-US: When I hand work back to you, which shape is most useful?
+      zh-CN: 我把东西交给你时，你更想看到哪种形式？
+    options:
+      - id: table_first
+        labels: {en-US: Tables first, zh-CN: 表格优先}
+      - id: bullets
+        labels: {en-US: Bullet list, zh-CN: 要点清单}
+      - id: full_draft
+        labels: {en-US: A finished draft, zh-CN: 完整成稿}
+
+  - key: writing_tone
+    round: 2
+    required: false
+    extracts: [preferences.writing_tone]
+    prompt:
+      en-US: Which of these sounds closest to how you write for an outside audience?
+      zh-CN: 三段示例文案，哪一段最像你平时对外写的？
+    options:
+      - id: concise
+        labels:
+          en-US: "Q3 pipeline is 12% behind plan. Two channels are carrying the gap; the rest are flat. Next week we cut the weakest two tests."
+          zh-CN: 简洁、少形容词
+      - id: warm
+        labels:
+          en-US: "Thanks for another strong quarter together. A few programs really landed, and I want to double down on those rather than spreading thinner."
+          zh-CN: 更口语、带一点温度
+      - id: formal
+        labels:
+          en-US: "Please find attached the quarterly channel review. Performance versus target is summarized below, followed by recommended actions."
+          zh-CN: 正式、书面
+
+  - key: followup_metric
+    round: 3
+    required: false
+    extracts: [business_goals]
+    follow_up_when:
+      role_in: [growth, general]
+    prompt:
+      en-US: Which numbers actually tell you whether growth is working?
+      zh-CN: 你说的增长／投放，主要看哪几个指标？
+
+  - key: followup_customer
+    round: 3
+    required: false
+    extracts: [company_context]
+    follow_up_when:
+      company_context: vague
+    prompt:
+      en-US: What kind of customer is that, and roughly how large?
+      zh-CN: 客户主要是哪一类，规模大概多大？
+
+  - key: followup_report
+    round: 3
+    required: false
+    extracts: [custom.report_outline]
+    follow_up_when:
+      recurring_deliverables: nonempty
+    prompt:
+      en-US: What sections usually show up in that weekly report or review?
+      zh-CN: 你那份周报／复盘里通常有哪几块内容？

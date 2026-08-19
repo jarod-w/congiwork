@@ -30,6 +30,8 @@ export interface ContextBundle {
   artifacts: ArtifactItem[];
   pending_approval?: ApprovalCardData | null;
   blocked_scope?: ScopeCard | null;
+  profile_card?: string;
+  pending_profile?: { id: string; key: string; value: unknown; status: string }[];
 }
 
 export interface MemoryRef {
@@ -160,4 +162,21 @@ export interface Copy {
   cleanupHint: string;
   markets: string;
   needsConfirmation: string;
+  profile: string;
+  connections: string;
+  skipSetup: string;
+  skipThis: string;
+  continueInterview: string;
+  learned: string;
+  archiveProfile: string;
+  archiveHint: string;
+  connect: string;
+  disconnect: string;
+  lastUsed: string;
+  notConnected: string;
+  connected: string;
+  confirmSummary: string;
+  changeJob: string;
+  profileHint: string;
+  connectionHint: string;
 }

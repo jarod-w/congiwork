@@ -62,6 +62,8 @@ def export_all(
         consent_store=request.app.state.consent_store,
         audit=request.app.state.audit_log,
         settings_store=request.app.state.settings_store,
+        profile=getattr(request.app.state, "profile", None),
+        tools=getattr(request.app.state, "tools", None),
     )
 
 
@@ -105,4 +107,6 @@ def delete_account(
         audit=request.app.state.audit_log,
         consent_store=request.app.state.consent_store,
         account_store=request.app.state.account_store,
+        profile=getattr(request.app.state, "profile", None),
+        tools=getattr(request.app.state, "tools", None),
     )

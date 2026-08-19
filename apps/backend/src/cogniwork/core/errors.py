@@ -101,3 +101,8 @@ class RateLimited(AppError):
 class UpstreamError(AppError):
     status_code = 502
     code = ErrorCode.UPSTREAM_ERROR
+
+
+class InternalError(AppError):
+    status_code = 500
+    code = ErrorCode.INTERNAL_ERROR

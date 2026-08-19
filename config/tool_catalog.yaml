@@ -1,0 +1,192 @@
+# MCP tool catalog (P0-05 §4).
+# Runtime maps these to ToolSpec. Scope metadata still lives only in scopes.yaml.
+#
+# M3 order: Calendar + Notion first, Gmail last (A10). GitHub is the approval
+# path proving ground — one tool per risk level, not a full GitHub surface.
+#
+# Write tools for Gmail / Calendar / Notion are Phase 5 (P0-05 M5).
+# Do not register them here until those executors exist.
+
+version: 1
+
+providers:
+  - id: gcal
+    display_name: Google Calendar
+    oauth_kind: google
+    account_label_from: email
+    tools:
+      - name: gcal.list_events
+        mcp_name: list_events
+        description: List upcoming calendar events in a time window.
+        scope_key: tool:gcal:read
+        risk: read
+        preview_renderer: table
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            time_min: {type: string, description: RFC3339 start}
+            time_max: {type: string, description: RFC3339 end}
+            query: {type: string}
+            max_results: {type: integer}
+      - name: gcal.get_event
+        mcp_name: get_event
+        description: Get one calendar event by id.
+        scope_key: tool:gcal:read
+        risk: read
+        preview_renderer: text
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            event_id: {type: string}
+          required: [event_id]
+      - name: gcal.find_free_slots
+        mcp_name: find_free_slots
+        description: Find free slots on the primary calendar.
+        scope_key: tool:gcal:read
+        risk: read
+        preview_renderer: table
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            time_min: {type: string}
+            time_max: {type: string}
+            duration_minutes: {type: integer}
+
+  - id: notion
+    display_name: Notion
+    oauth_kind: notion
+    account_label_from: workspace
+    tools:
+      - name: notion.search
+        mcp_name: search
+        description: Search pages and databases the user shared with this connection.
+        scope_key: tool:notion:read
+        risk: read
+        preview_renderer: text
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            query: {type: string}
+          required: [query]
+      - name: notion.get_page
+        mcp_name: get_page
+        description: Read a Notion page the user has shared.
+        scope_key: tool:notion:read
+        risk: read
+        preview_renderer: text
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            page_id: {type: string}
+          required: [page_id]
+      - name: notion.query_database
+        mcp_name: query_database
+        description: Query a Notion database the user has shared.
+        scope_key: tool:notion:read
+        risk: read
+        preview_renderer: table
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            database_id: {type: string}
+            query: {type: string}
+          required: [database_id]
+
+  - id: gmail
+    display_name: Gmail
+    oauth_kind: google
+    account_label_from: email
+    tools:
+      - name: gmail.search_messages
+        mcp_name: search_messages
+        description: Search the mailbox with a Gmail query string.
+        scope_key: tool:gmail:read
+        risk: read
+        preview_renderer: text
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            query: {type: string}
+            max_results: {type: integer}
+          required: [query]
+      - name: gmail.get_message
+        mcp_name: get_message
+        description: Read one email by id.
+        scope_key: tool:gmail:read
+        risk: read
+        preview_renderer: email
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            message_id: {type: string}
+          required: [message_id]
+      - name: gmail.list_threads
+        mcp_name: list_threads
+        description: List recent threads matching a query.
+        scope_key: tool:gmail:read
+        risk: read
+        preview_renderer: text
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            query: {type: string}
+            max_results: {type: integer}
+
+  - id: github
+    display_name: GitHub
+    oauth_kind: github
+    account_label_from: login
+    tools:
+      - name: github.search_code
+        mcp_name: search_code
+        description: Search code in repositories the user granted access to.
+        scope_key: tool:github:read
+        risk: read
+        preview_renderer: text
+        timeout_s: 30
+        input_schema:
+          type: object
+          properties:
+            query: {type: string}
+          required: [query]
+      - name: github.create_issue
+        mcp_name: create_issue
+        description: Open an issue in a granted repository.
+        scope_key: tool:github:write
+        risk: write
+        preview_renderer: text
+        timeout_s: 30
+        retryable: false
+        input_schema:
+          type: object
+          properties:
+            owner: {type: string}
+            repo: {type: string}
+            title: {type: string}
+            body: {type: string}
+          required: [owner, repo, title]
+      - name: github.merge_pr
+        mcp_name: merge_pr
+        description: Merge a pull request. This cannot be undone from here.
+        scope_key: tool:github:write
+        risk: irreversible
+        preview_renderer: diff
+        timeout_s: 30
+        retryable: false
+        input_schema:
+          type: object
+          properties:
+            owner: {type: string}
+            repo: {type: string}
+            number: {type: integer}
+            commit_title: {type: string}
+          required: [owner, repo, number]

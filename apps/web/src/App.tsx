@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApprovalCard,
+  ConnectionManager,
   CaptureCard,
   Composer,
   ConsentCard,
   ContextPanel,
   MemoryBrowser,
   MessageStream,
+  ProfilePage,
   PrivacyCenter,
   TaskList,
   Timeline,
@@ -17,6 +19,11 @@ import {
   type ScopeCard,
   type StepItem,
   type TaskSummary,
+  type ProfileFieldView,
+  type InterviewQuestionView,
+  type ProviderView,
+  type ConnectionView,
+  type ActivityView,
 } from '@cogniwork/shared-ui';
 import { api, clearToken, downloadArtifact, getToken, setToken } from './api';
 import { catalogFor } from './i18n';
@@ -39,7 +46,7 @@ interface TaskDetail {
   artifacts: ContextBundle['artifacts'];
 }
 
-type View = 'workspace' | 'memory' | 'privacy';
+type View = 'workspace' | 'memory' | 'profile' | 'connections' | 'privacy';
 
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -71,6 +78,18 @@ export function App() {
     cleanup: boolean;
   } | null>(null);
   const [blockedScope, setBlockedScope] = useState<ScopeCard | null>(null);
+  const [profileFields, setProfileFields] = useState<ProfileFieldView[]>([]);
+  const [profilePending, setProfilePending] = useState<ProfileFieldView[]>([]);
+  const [interviewQuestion, setInterviewQuestion] = useState<InterviewQuestionView | null>(null);
+  const [interviewLearned, setInterviewLearned] = useState<ProfileFieldView[]>([]);
+  const [interviewDraft, setInterviewDraft] = useState('');
+  const [interviewSelected, setInterviewSelected] = useState<string[]>([]);
+  const [profileCompleted, setProfileCompleted] = useState(false);
+  const [archivedCount, setArchivedCount] = useState(0);
+  const [providers, setProviders] = useState<ProviderView[]>([]);
+  const [connections, setConnections] = useState<ConnectionView[]>([]);
+  const [connectionActivity, setConnectionActivity] = useState<ActivityView[]>([]);
+  const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
   const deltaRef = useRef('');
   const frameRef = useRef<number | null>(null);
 
@@ -98,6 +117,16 @@ export function App() {
   useEffect(() => {
     if (!token || view !== 'privacy') return;
     void refreshPrivacy();
+  }, [token, view]);
+
+  useEffect(() => {
+    if (!token || view !== 'profile') return;
+    void refreshProfile();
+  }, [token, view]);
+
+  useEffect(() => {
+    if (!token || view !== 'connections') return;
+    void refreshConnections();
   }, [token, view]);
 
   useEffect(() => {
@@ -185,6 +214,35 @@ export function App() {
       markets: overview.boundaries.markets,
       cleanup: overview.settings.episodic_auto_cleanup,
     });
+  }
+
+  async function refreshProfile() {
+    const body = await api<{
+      profile: { completed: boolean };
+      fields: ProfileFieldView[];
+      archived: { id: string }[];
+      interview: { status: string } | null;
+    }>('/api/v1/profile');
+    setProfileFields(body.fields.filter((item) => item.status === 'active'));
+    setProfilePending(body.fields.filter((item) => item.status === 'pending'));
+    setProfileCompleted(body.profile.completed);
+    setArchivedCount(body.archived.length);
+    setInterviewLearned(body.fields.filter((item) => item.status === 'active'));
+    if (body.interview && (body.interview.status === 'in_progress' || body.interview.status === 'awaiting_summary')) {
+      const started = await api<{
+        question: InterviewQuestionView | null;
+        learned: ProfileFieldView[];
+      }>('/api/v1/profile/interview/start', { method: 'POST' });
+      setInterviewQuestion(started.question);
+      setInterviewLearned(started.learned);
+    }
+  }
+
+  async function refreshConnections() {
+    const listed = await api<{ providers: ProviderView[] }>('/api/v1/tools/providers');
+    const live = await api<{ connections: ConnectionView[] }>('/api/v1/tools/connections');
+    setProviders(listed.providers);
+    setConnections(live.connections);
   }
 
   async function authenticate(path: '/api/v1/auth/register' | '/api/v1/auth/login') {
@@ -289,6 +347,12 @@ export function App() {
             <button type="button" className={view === 'memory' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('memory')}>
               {copy.memory}
             </button>
+            <button type="button" className={view === 'profile' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('profile')}>
+              {copy.profile}
+            </button>
+            <button type="button" className={view === 'connections' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('connections')}>
+              {copy.connections}
+            </button>
             <button type="button" className={view === 'privacy' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('privacy')}>
               {copy.privacy}
             </button>
@@ -339,6 +403,121 @@ export function App() {
             }}
             onDeleteAll={() => {
               void api('/api/v1/memories?all=true', { method: 'DELETE' }).then(() => void refreshMemories());
+            }}
+          />
+        ) : view === 'profile' ? (
+          <ProfilePage
+            copy={copy}
+            fields={profileFields}
+            pending={profilePending}
+            question={interviewQuestion}
+            learned={interviewLearned}
+            draft={interviewDraft}
+            selected={interviewSelected}
+            completed={profileCompleted}
+            archivedCount={archivedCount}
+            onDraft={setInterviewDraft}
+            onToggleOption={(id) => {
+              setInterviewSelected((current) =>
+                current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+              );
+            }}
+            onAnswer={() => {
+              void api<{
+                question: InterviewQuestionView | null;
+                learned: ProfileFieldView[];
+                task?: { id: string };
+              }>('/api/v1/profile/interview/answer', {
+                method: 'POST',
+                body: JSON.stringify({ text: interviewDraft, selected: interviewSelected }),
+              }).then((body) => {
+                setInterviewQuestion(body.question);
+                setInterviewLearned(body.learned);
+                setInterviewDraft('');
+                setInterviewSelected([]);
+                if (body.task?.id) {
+                  setActiveId(body.task.id);
+                  setView('workspace');
+                }
+                void refreshProfile();
+              });
+            }}
+            onSkipQuestion={() => {
+              void api<{ question: InterviewQuestionView | null; learned: ProfileFieldView[] }>(
+                '/api/v1/profile/interview/skip',
+                {
+                  method: 'POST',
+                  body: JSON.stringify({ scope: 'question' }),
+                },
+              ).then((body) => {
+                setInterviewQuestion(body.question);
+                setInterviewLearned(body.learned);
+              });
+            }}
+            onSkipAll={() => {
+              void api('/api/v1/profile/interview/skip', {
+                method: 'POST',
+                body: JSON.stringify({ scope: 'all' }),
+              }).then(() => {
+                setInterviewQuestion(null);
+                void refreshProfile();
+              });
+            }}
+            onStart={() => {
+              void api<{ question: InterviewQuestionView | null; learned: ProfileFieldView[] }>(
+                '/api/v1/profile/interview/start',
+                { method: 'POST' },
+              ).then((body) => {
+                setInterviewQuestion(body.question);
+                setInterviewLearned(body.learned);
+              });
+            }}
+            onComplete={() => {
+              void api('/api/v1/profile/interview/complete', { method: 'POST' }).then(() => void refreshProfile());
+            }}
+            onConfirmPending={(id, accept) => {
+              void api(`/api/v1/profile/fields/${id}/confirm`, {
+                method: 'POST',
+                body: JSON.stringify({ action: accept ? 'accept' : 'reject' }),
+              }).then(() => void refreshProfile());
+            }}
+            onDeleteField={(key) => {
+              void api(`/api/v1/profile/fields/${key}`, { method: 'DELETE' }).then(() => void refreshProfile());
+            }}
+            onArchive={() => {
+              void api('/api/v1/profile/archive', {
+                method: 'POST',
+                body: JSON.stringify({ reason: 'changed role' }),
+              }).then(() => void refreshProfile());
+            }}
+          />
+        ) : view === 'connections' ? (
+          <ConnectionManager
+            copy={copy}
+            providers={providers}
+            connections={connections}
+            activity={connectionActivity}
+            selectedId={selectedConnection}
+            onConnect={(provider) => {
+              void api<{ status: string; authorization_url?: string }>(
+                '/api/v1/tools/connections',
+                { method: 'POST', body: JSON.stringify({ provider }) },
+              ).then((body) => {
+                if (body.authorization_url) {
+                  window.location.assign(body.authorization_url);
+                  return;
+                }
+                void refreshConnections();
+              });
+            }}
+            onDisconnect={(id) => {
+              void api(`/api/v1/tools/connections/${id}`, { method: 'DELETE' }).then(() => void refreshConnections());
+            }}
+            onSelect={(id) => {
+              setSelectedConnection(id);
+              void api<{ events: ActivityView[] }>(`/api/v1/tools/connections/${id}/activity`).then((body) => {
+                setConnectionActivity(body.events);
+              });
             }}
           />
         ) : view === 'privacy' && privacy ? (
@@ -437,6 +616,11 @@ export function App() {
                 <CaptureCard
                   copy={copy}
                   items={pendingMemories.filter((item) => item.source_ref && (item.source_ref as { task_id?: string }).task_id === detail.id)}
+                  profileItems={(bundle?.pending_profile ?? []).map((item) => ({
+                    id: item.id,
+                    key: item.key,
+                    value: item.value,
+                  }))}
                   onKeep={() => {
                     pendingMemories
                       .filter((item) => (item.source_ref as { task_id?: string } | null)?.task_id === detail.id)
@@ -446,7 +630,14 @@ export function App() {
                           body: JSON.stringify({ action: 'accept' }),
                         });
                       });
+                    (bundle?.pending_profile ?? []).forEach((item) => {
+                      void api(`/api/v1/profile/fields/${item.id}/confirm`, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: 'accept' }),
+                      });
+                    });
                     void refreshMemories();
+                    void refreshProfile();
                   }}
                   onSkip={() => undefined}
                 />

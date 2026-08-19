@@ -23,6 +23,7 @@ dependencies = [
     "langchain-core>=0.3",
     "openai>=1.50",
     "anthropic>=0.40",
+    "cryptography>=43.0",
 ]
 
 [project.optional-dependencies]

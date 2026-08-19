@@ -71,7 +71,14 @@ button, input, textarea { font: inherit; }
   padding: 0.65rem 0.75rem;
   width: 100%;
 }
-.cw-privacy, .cw-memory { padding-bottom: 3rem; }
+.cw-interview textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  padding: 0.65rem 0.75rem;
+  margin-top: 0.7rem;
+}
+.cw-interview h2 { font-size: 1.15rem; }
 .cw-privacy h1, .cw-memory h1 { margin-top: 0; }
 
 .cw-tasklist h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
