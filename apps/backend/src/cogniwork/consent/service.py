@@ -108,3 +108,24 @@ class ConsentService:
         if spec is None:
             return None
         return spec.copy_for(locale, fallback).degraded_behavior
+
+    def grant(
+        self,
+        *,
+        user_id: str,
+        scope_key: str,
+        skip_repeat_prompt: bool,
+        surface: str,
+        consent_text_version: str,
+        ip_hash: str | None = None,
+    ) -> None:
+        """授权写入。给审批卡「以后不用再问」用，不是第二条判定路径。"""
+        self._store.append(
+            user_id=user_id,
+            scope_key=scope_key,
+            action=ConsentAction.GRANTED,
+            always_allow=skip_repeat_prompt,
+            surface=surface,
+            consent_text_version=consent_text_version,
+            ip_hash=ip_hash,
+        )

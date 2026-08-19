@@ -55,11 +55,12 @@ class Settings(BaseSettings):
     llm_provider: str = "auto"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    max_upload_bytes: int = 10 * 1024 * 1024
+    max_upload_bytes: int = 20 * 1024 * 1024
     task_step_limit: int = 25
     task_cost_usd_limit: float = 0.50
     daily_cost_usd_limit: float = 5.00
     model_routes_path: str = ""
+    memory_budget_tokens: int = 2000
 
 
 @lru_cache(maxsize=1)

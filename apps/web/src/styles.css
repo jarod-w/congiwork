@@ -48,6 +48,31 @@ button, input, textarea { font: inherit; }
 .cw-btn-ghost { background: transparent; }
 .cw-btn-block { width: 100%; }
 .cw-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cw-nav { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1rem; }
+.cw-row { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.7rem; }
+.cw-row-equal .cw-btn { flex: 1; min-width: 8rem; }
+.cw-wrap { flex-wrap: wrap; }
+.cw-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 1rem 0; }
+.cw-tab { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 0.4rem 0.9rem; cursor: pointer; }
+.cw-tab.is-active { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.cw-memory-list, .cw-privacy ul { list-style: none; padding: 0; }
+.cw-memory-card, .cw-approval, .cw-consent, .cw-capture {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1rem;
+  margin-bottom: 0.8rem;
+}
+.cw-remember { display: flex; gap: 0.6rem; margin-bottom: 1rem; }
+.cw-remember input, .cw-approval textarea, .cw-preview textarea {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  padding: 0.65rem 0.75rem;
+  width: 100%;
+}
+.cw-privacy, .cw-memory { padding-bottom: 3rem; }
+.cw-privacy h1, .cw-memory h1 { margin-top: 0; }
 
 .cw-tasklist h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .cw-tasklist ul { list-style: none; padding: 0; margin: 0 0 1.5rem; }
@@ -109,6 +134,7 @@ button, input, textarea { font: inherit; }
   background: transparent;
   min-width: 12rem;
 }
+.cw-persist { grid-column: 1 / -1; font-size: 0.85rem; }
 .cw-attach { color: var(--muted); font-size: 0.9rem; cursor: pointer; max-width: 9rem; }
 .cw-attach input { display: none; }
 

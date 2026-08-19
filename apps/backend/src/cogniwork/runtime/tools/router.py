@@ -39,7 +39,7 @@ class ToolRouter:
         found = self._registry.get(name)
         if found is None:
             return ToolResult(name, False, f"Unknown tool: {name}")
-        spec, executor = found
+        spec, _unused_executor = found
         settings = get_settings()
         locale = settings.default_locale
         fallback = settings.fallback_locale
@@ -67,25 +67,41 @@ class ToolRouter:
             return ToolResult(name, False, message, {"scope_key": spec.scope_key}, blocked=True)
 
         if decision is Gate.NEEDS_APPROVAL:
-            # 审批中断是阶段 3（P0-03 M4）。本阶段拒绝执行，避免未审批就出网。
-            self._audit.record(
-                user_id=user_id,
-                task_id=str(task_id) if task_id else None,
-                step_id=str(step_id) if step_id else None,
-                scope_key=spec.scope_key,
-                surface=surface,
-                action=spec.name,
-                target_digest=digest,
-                result="denied",
-            )
+            # 不在这里出网。审批请求由 Runtime 图创建，任务挂起。
             return ToolResult(
                 name,
                 False,
                 "This action needs your confirmation before I can run it.",
-                {"scope_key": spec.scope_key},
+                {"scope_key": spec.scope_key, "tool_name": spec.name},
                 needs_approval=True,
             )
 
+        return self.execute_approved(
+            user_id=user_id,
+            name=name,
+            arguments=arguments,
+            context=context,
+            audit_result="allowed",
+        )
+
+    def execute_approved(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+        audit_result: str = "allowed",
+    ) -> ToolResult:
+        """人已经批准之后的执行。不再过闸门 —— 闸门已经把这次调用停下来了。"""
+        found = self._registry.get(name)
+        if found is None:
+            return ToolResult(name, False, f"Unknown tool: {name}")
+        spec, executor = found
+        digest = digest_args(arguments)
+        surface = str(context.get("surface") or "web")
+        task_id = context.get("task_id")
+        step_id = context.get("step_id")
         started = perf_counter()
         try:
             result = executor.invoke(spec, arguments, context)
@@ -119,7 +135,7 @@ class ToolRouter:
             surface=surface,
             action=spec.name,
             target_digest=digest,
-            result="allowed" if result.ok else "failed",
+            result=audit_result if result.ok else "failed",
             duration_ms=duration,
         )
         return result

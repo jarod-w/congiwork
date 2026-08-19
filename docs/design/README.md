@@ -150,6 +150,7 @@ N = 6 样本很小，前两条的判定必须结合 `P0-07` §11 的定性访谈
 | 7 | §7.10 | 「优先支持浏览器可达的 SaaS（**Slack**、Notion、Gmail、GitHub）」 | **首批 = Gmail + Google Calendar + Notion + GitHub（4 个）**。相对原文两处偏离：**Slack 移出**（原文有，转入 `P0-05` §2.2 候选池）、**Google Calendar 加入**（原文无）。Gmail 回到原文之内 | 决策者 2026-08-18 改定，推翻此前的 B3（Gmail 移出）与 A7（Calendar 移出）。理由：邮件是 A1 三类高频任务之一，上一版把它整个推给桌面端，代价是 **Web 端用户完全没有邮件能力**；Calendar 与 Gmail 共用同一套 Google 接入与验证材料，边际成本低。**代价是 Google CASA 审核回到关键路径**——配套 G1/G2 检查点与「只发不读」降级预案。详见 `P0-05` §2.1 / §2.1.1、`P0-open-questions.md` A10 |
 | 8 | §7.6 | 「先支持 1-2 家跑通」（未提及自定义供应商） | 2 家内置（Anthropic + OpenAI）**外加「用户自定义 provider」能力**——规划未涉及的新增范围 | A6 决策。代价是引入两个必须处理的问题：`base_url` 的 SSRF 防护、tool-use 能力探测与不降级；新增 Scope `llm:custom:route` 与约 4 人日。详见 `P0-03` §7.1 |
 | 9 | §6 | 「桌面 Computer Use 白名单应用操作成功率 ≥ 90%」 | 判定粒度细化为 **（适配器 × 平台）逐组合**，不做跨平台平均；未达标组合不上线且在客户端明示 | A4 选双平台后，合并统计会把 Windows 96% 与 macOS 82% 平均成「达标」，掩盖 macOS 的真实质量。详见 `P0-08` §8.3 |
+| 10 | §7.7 | 「PostgreSQL + pgvector 一套存储」 | Phase 1 实现仍是**一套 PostgreSQL、不引入独立向量库**。embedding 列用 `real[]`，余弦在应用层。原因：CI 与官方 `postgres:16` 镜像没有 `vector` 扩展。生产若装 pgvector，后续迁移可改 `vector(1024)` + HNSW，接口不用动 | 硬约束「一套存储」保留；把「必须现在装扩展」从阻塞项拿掉。详见 `apps/backend/migrations/0004_memory.sql` |
 
 ---
 

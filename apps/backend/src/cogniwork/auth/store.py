@@ -49,6 +49,12 @@ class InMemoryAccountStore:
             return None
         return self._by_id.get(account_id)
 
+    def delete(self, account_id: UUID) -> None:
+        account = self._by_id.pop(account_id, None)
+        if account is None:
+            return
+        self._by_email.pop(account.email, None)
+
     def clear(self) -> None:
         self._by_id.clear()
         self._by_email.clear()
@@ -106,6 +112,10 @@ class PostgresAccountStore:
                 (_normalize_email(email),),
             ).fetchone()
         return _row_to_account(row)
+
+    def delete(self, account_id: UUID) -> None:
+        with self._pool.connection() as conn:
+            conn.execute("DELETE FROM account WHERE id = %s", (account_id,))
 
     def clear(self) -> None:
         with self._pool.connection() as conn:

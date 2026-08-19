@@ -63,7 +63,7 @@ def test_grant_then_check_allows_and_revoke_denies(client, registered, registry)
     assert body["action"] == ConsentAction.REVOKED
     assert body["purge_requested"] is False
     assert body["purge_completed"] is False
-    assert body["purge_supported"] is False
+    assert body["purge_supported"] is True
 
     assert svc.check(user_id, scope_key, Risk.READ) is ConsentDecision.DENY
 

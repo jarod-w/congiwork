@@ -38,6 +38,8 @@ export function connectTaskEvents(
               seq: number;
               text?: string;
               status?: string;
+              blocked?: boolean;
+              scope_key?: string;
             };
             lastSeq = payload.seq;
             handlers.onEvent(payload);

@@ -15,6 +15,7 @@ from langgraph.graph import END, START, StateGraph
 
 from cogniwork.core.clock import now
 from cogniwork.core.ids import new_id
+from cogniwork.runtime.approvals import PendingToolCall
 from cogniwork.runtime.digest import digest_args
 from cogniwork.runtime.llm.router import RoutingRequest
 from cogniwork.runtime.llm.types import ChatMessage
@@ -35,6 +36,7 @@ class GraphState(TypedDict):
     done: bool
     failed: bool
     cancel: bool
+    paused: bool
 
 
 def compile_graph(runtime: Any) -> Any:
@@ -45,7 +47,11 @@ def compile_graph(runtime: Any) -> Any:
     graph.add_node("finalize", lambda state: _finalize(runtime, state))
     graph.add_edge(START, "prepare")
     graph.add_edge("prepare", "act")
-    graph.add_conditional_edges("act", _after_act, {"observe": "observe", "finalize": "finalize"})
+    graph.add_conditional_edges(
+        "act",
+        _after_act,
+        {"observe": "observe", "finalize": "finalize", "pause": END},
+    )
     graph.add_conditional_edges(
         "observe",
         _after_observe,
@@ -55,7 +61,9 @@ def compile_graph(runtime: Any) -> Any:
     return graph.compile(checkpointer=MemorySaver())
 
 
-def _after_act(state: GraphState) -> Literal["observe", "finalize"]:
+def _after_act(state: GraphState) -> Literal["observe", "finalize", "pause"]:
+    if state.get("paused"):
+        return "pause"
     if state.get("done") or state.get("failed") or state.get("cancel"):
         return "finalize"
     return "observe"
@@ -82,14 +90,36 @@ def _prepare(runtime: Any, state: GraphState) -> GraphState:
         uploaded = runtime.store.get_file(task.user_id, UUID(str(file_id)))
         if uploaded:
             names.append(f"{uploaded.filename} ({uploaded.id})")
+    memory_xml = ""
+    used = []
+    memory = getattr(runtime, "memory", None)
+    if memory is not None:
+        try:
+            query = str(task.input.get("message") or "")
+            bundle = memory.retrieve(task.user_id, query)
+            memory_xml = bundle.xml
+            used = [
+                {
+                    "id": str(row.item.id),
+                    "type": row.item.type.value,
+                    "summary": row.item.summary,
+                    "content": row.item.content,
+                    "source_ref": row.item.source_ref,
+                    "score": round(row.score, 3),
+                }
+                for row in bundle.preferences + bundle.facts + bundle.past
+            ]
+            runtime.used_memories[str(task.id)] = used
+        except Exception:
+            runtime.used_memories[str(task.id)] = []
     runtime.messages[str(task.id)] = [
         ChatMessage(
             "system",
-            _system_prompt(json.dumps(files), names),
+            _system_prompt(json.dumps(files), names, memory_xml),
         ),
         ChatMessage("user", str(task.input.get("message") or "")),
     ]
-    return {**state, "done": False, "failed": False}
+    return {**state, "done": False, "failed": False, "paused": False}
 
 
 def _act(runtime: Any, state: GraphState) -> GraphState:
@@ -185,7 +215,8 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
     for call in result.tool_calls:
         if runtime.is_cancelled(state["task_id"]):
             return {**state, "iteration": iteration, "cancel": True}
-        _run_tool(runtime, task, call.id, call.name, call.arguments)
+        if _run_tool(runtime, task, call.id, call.name, call.arguments, iteration):
+            return {**state, "iteration": iteration, "paused": True}
 
     artifacts = runtime.store.list_artifacts(task.user_id, task.id)
     # stub / 周报路径：写出产物后即可结束，避免空转。
@@ -242,6 +273,25 @@ def _finalize(runtime: Any, state: GraphState) -> GraphState:
         terminal = "succeeded"
     task.ended_at = now()
     runtime.store.save_task(task)
+    memory = getattr(runtime, "memory", None)
+    if memory is not None:
+        try:
+            memory.record_episode(task)
+            from cogniwork.memory.extract import extract_from_task
+
+            candidates = extract_from_task(memory, task)
+            for item in candidates:
+                runtime.events.publish(
+                    str(task.id),
+                    "memory.candidate",
+                    memory_id=str(item.id),
+                    summary=item.summary,
+                    type=item.type.value,
+                    status=item.status.value,
+                )
+        except Exception:
+            logger = __import__("logging").getLogger("cogniwork.runtime")
+            logger.exception("memory finalize failed for %s", task.id)
     runtime.events.publish(str(task.id), "task.status", status=task.status.value)
     runtime.events.publish(
         str(task.id),
@@ -253,7 +303,14 @@ def _finalize(runtime: Any, state: GraphState) -> GraphState:
     return state
 
 
-def _run_tool(runtime: Any, task: Any, call_id: str, name: str, arguments: dict[str, Any]) -> None:
+def _run_tool(
+    runtime: Any,
+    task: Any,
+    call_id: str,
+    name: str,
+    arguments: dict[str, Any],
+    iteration: int = 0,
+) -> bool:
     spec = runtime.tool_router.resolve(name)
     title = _tool_title(spec, name)
     step = _open_step(
@@ -289,8 +346,46 @@ def _run_tool(runtime: Any, task: Any, call_id: str, name: str, arguments: dict[
             "step_id": str(step.id),
             "surface": task.surface.value,
             "file_ids": task.input.get("file_ids") or [],
+            "memory": getattr(runtime, "memory", None),
         },
     )
+    if result.needs_approval:
+        approval = runtime.approvals.create(
+            user_id=task.user_id,
+            task_id=task.id,
+            step_id=step.id,
+            spec=spec,
+            tool_name=name,
+            arguments=arguments,
+        )
+        runtime.pending_calls[str(task.id)] = PendingToolCall(
+            task_id=task.id,
+            user_id=task.user_id,
+            tool_name=name,
+            arguments=arguments,
+            call_id=call_id,
+            iteration=iteration,
+            step_id=step.id,
+            approval_id=approval.id,
+        )
+        step.status = StepStatus.PENDING
+        runtime.store.save_step(step)
+        _set_status(runtime, task, TaskStatus.WAITING_APPROVAL)
+        runtime.events.publish(str(task.id), "task.status", status=task.status.value)
+        runtime.events.publish(
+            str(task.id),
+            "approval.requested",
+            approval_id=str(approval.id),
+            title=approval.title,
+            risk=approval.risk.value,
+            scope=approval.scope_key,
+            preview=approval.preview,
+        )
+        return True
+    if result.blocked:
+        scope_key = (result.data or {}).get("scope_key") or (spec.scope_key if spec else None)
+        if scope_key:
+            runtime.blocked_scopes[str(task.id)] = str(scope_key)
     status = StepStatus.SUCCEEDED if result.ok else StepStatus.FAILED
     _finish_step(
         runtime,
@@ -307,6 +402,7 @@ def _run_tool(runtime: Any, task: Any, call_id: str, name: str, arguments: dict[
         name=name,
         ok=result.ok,
         blocked=result.blocked,
+        scope_key=(result.data or {}).get("scope_key") or (spec.scope_key if spec else None),
     )
     for item in (result.data or {}).get("artifacts") or []:
         runtime.events.publish(
@@ -320,6 +416,7 @@ def _run_tool(runtime: Any, task: Any, call_id: str, name: str, arguments: dict[
     runtime.messages[str(task.id)].append(
         ChatMessage("tool", result.content, tool_call_id=call_id, name=name)
     )
+    return False
 
 
 def _open_step(
@@ -388,13 +485,17 @@ def _set_status(runtime: Any, task: Any, target: TaskStatus) -> None:
     runtime.store.save_task(task)
 
 
-def _system_prompt(file_ids_json: str, names: list[str]) -> str:
+def _system_prompt(file_ids_json: str, names: list[str], memory_xml: str = "") -> str:
     listing = ", ".join(names) if names else "none"
+    memory_block = f"\n{memory_xml}\n" if memory_xml else "\n"
     return (
         "You are CogniWork, an AI coworker. Complete the user's task with the tools "
         "you have. Read uploaded files before writing artifacts. Do not claim you used "
         "a tool you do not have. Prefer builtin.write_artifact with "
-        "generate=weekly_report when the user wants a weekly report from a spreadsheet.\n"
+        "generate=weekly_report when the user wants a weekly report from a spreadsheet."
+        f"{memory_block}"
+        "When memory is present, use it and mention the source. "
+        "Do not invent memories that are not listed.\n"
         f"file_ids={file_ids_json}\n"
         f"uploaded={listing}\n"
     )

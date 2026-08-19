@@ -168,6 +168,26 @@ class InMemoryTaskStore:
         found.sort(key=lambda a: a.created_at)
         return found
 
+    def list_files(self, user_id: UUID) -> list[UploadedFile]:
+        found = [item for item in self.files.values() if item.user_id == user_id]
+        found.sort(key=lambda item: item.created_at, reverse=True)
+        return found
+
+    def delete_for_user(self, user_id: UUID) -> int:
+        tasks = [task.id for task in self.list_tasks(user_id)]
+        for task_id in tasks:
+            self.tasks.pop(task_id, None)
+        for conv in list(self.conversations.values()):
+            if conv.user_id == user_id:
+                self.conversations.pop(conv.id, None)
+        for item in list(self.files.values()):
+            if item.user_id == user_id:
+                self.files.pop(item.id, None)
+        for item in list(self.artifacts.values()):
+            if item.user_id == user_id:
+                self.artifacts.pop(item.id, None)
+        return len(tasks)
+
     def clear(self) -> None:
         self.conversations.clear()
         self.tasks.clear()
@@ -469,6 +489,42 @@ class PostgresTaskStore:
             )
             for r in rows
         ]
+
+    def list_files(self, user_id: UUID) -> list[UploadedFile]:
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM uploaded_file
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [
+            UploadedFile(
+                id=r["id"],
+                user_id=r["user_id"],
+                filename=r["filename"],
+                content_type=r["content_type"],
+                size_bytes=int(r["size_bytes"]),
+                persist=bool(r["persist"]),
+                content=bytes(r["content"]),
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+
+    def delete_for_user(self, user_id: UUID) -> int:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT count(*) AS n FROM task WHERE user_id = %s",
+                (user_id,),
+            ).fetchone()
+            count = int(row["n"]) if row else 0
+            conn.execute("DELETE FROM conversation WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM uploaded_file WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM artifact WHERE user_id = %s", (user_id,))
+        return count
 
     def clear(self) -> None:
         with self._pool.connection() as conn:
