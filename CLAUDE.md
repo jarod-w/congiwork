@@ -4,21 +4,24 @@ CogniWork（AI Coworker OS）。本文件给在此仓库工作的 Claude Code �
 
 ## 仓库当前状态
 
-**骨架已搭，核心循环未开始。** 待办与顺序见 [`TODO.md`](TODO.md)，那是唯一的进度事实来源。
+**零授权闭环已通。** 待办与顺序见 [`TODO.md`](TODO.md)，那是唯一的进度事实来源。
 
 ```
 config/scopes.yaml        ✅ Scope 注册表（授权与审计的唯一事实来源）
-apps/backend/             🚧 core/ + consent/ + auth/ + api/v1 已建，Runtime / Memory 未开始
+config/model_routes.yaml  ✅ Model Router 配置表
+apps/backend/             ✅ core/ + consent/ + auth/ + runtime/ + api/v1
   src/cogniwork/core/       配置、错误模型、UUIDv7、UTC 时间、DB/Redis
   src/cogniwork/consent/    Scope 注册表 + ConsentService + Postgres/Redis store
   src/cogniwork/auth/       注册/登录、Bearer JWT
+  src/cogniwork/runtime/    TaskEngine 门面、LangGraph、builtin 工具、SSE、LLM 路由
   src/cogniwork/migrate.py  SQL 迁移工具
-  migrations/               0001_consent.sql + 0002_account.sql
+  migrations/               0001_consent.sql + 0002_account.sql + 0003_task.sql
   tests/guards/           ✅ 硬约束的可执行形式，见下
+  tests/e2e/              ✅ 零授权核心路径（P0-07 §8.3）
 packages/shared-types/    ✅ 错误码、SSE 事件、审批动作
-apps/web/                 ⬜ 空目录
+packages/shared-ui/       ✅ 工作台展示组件（无网络/路由）
+apps/web/                 ✅ 任务工作台（三栏 + SSE + 上传/产物）
 apps/desktop-shell/       ⬜ 未创建
-packages/shared-ui/       ⬜ 空目录
 packages/mcp-connectors/  ⬜ 空目录
 ```
 
@@ -29,9 +32,14 @@ packages/mcp-connectors/  ⬜ 空目录
 ```bash
 cd apps/backend
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest -q                    # 含 tests/guards
+.venv/bin/python -m pytest -q                    # 含 tests/guards 与零授权 E2E
 .venv/bin/python -m pytest -q -m release         # 发版检查项（默认不跑）
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format .
+.venv/bin/python -m uvicorn cogniwork.main:app --reload
+
+# 工作台（另开终端）
+pnpm install
+pnpm --filter @cogniwork/web dev
 ```
 
 ### `tests/guards/` 是什么

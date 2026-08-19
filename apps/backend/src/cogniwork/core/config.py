@@ -44,6 +44,23 @@ class Settings(BaseSettings):
     # IP 入 consent_record 前先哈希，不存原文（硬约束 8）
     ip_hash_pepper: str = "dev-only-change-me"
 
+    # ── 前端 ──
+    cors_origins: tuple[str, ...] = (
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    )
+
+    # ── Agent / LLM（P0-03 §7）──
+    # auto：有密钥走内置供应商，没有则 stub。单测与零授权 E2E 不依赖外网。
+    llm_provider: str = "auto"
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    max_upload_bytes: int = 10 * 1024 * 1024
+    task_step_limit: int = 25
+    task_cost_usd_limit: float = 0.50
+    daily_cost_usd_limit: float = 5.00
+    model_routes_path: str = ""
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

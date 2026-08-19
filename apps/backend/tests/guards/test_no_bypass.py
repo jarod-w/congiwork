@@ -17,8 +17,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 SRC = Path(__file__).resolve().parents[2] / "src" / "cogniwork"
 
 # 允许出现授权判断逻辑的模块 —— 唯一检查点及其直接支撑。
@@ -30,6 +28,8 @@ CONSENT_OWNED = {
     "consent/models.py",
     "consent/store.py",
     "api/v1/consent.py",
+    # Runtime 工具调用链上的闸门 —— 这是 check() 的唯一调用方，不是第二条判定路径。
+    "runtime/tools/hook.py",
 }
 
 # 判定「这里在做权限判断」的信号
@@ -139,13 +139,50 @@ def test_no_naive_utcnow():
     )
 
 
-@pytest.mark.skip(reason="待 P0-03 M3 工具抽象层落地后启用")
 def test_executors_make_no_upstream_call_when_denied():
     """动态版本的无旁路检查（P0-07 §8.2）。
 
-    对每个 Executor 的集成测试：mock ConsentService 返回 DENY，
-    断言无任何上游调用发生。
-
-    现在还没有 Executor，所以是 skip 而不是删掉 —— 留在这里是为了
-    让 P0-03 M3 的实现者看到这条测试在等他，而不是等他想起来要写。
+    mock 检查点返回 DENY，断言 Executor 一次都没被调用 —— 上游请求根本不该发出。
     """
+    from cogniwork.consent.models import ConsentDecision, Risk
+    from cogniwork.runtime.digest import InMemoryAuditLog
+    from cogniwork.runtime.tools.registry import ToolRegistry
+    from cogniwork.runtime.tools.router import ToolRouter
+    from cogniwork.runtime.tools.spec import ToolResult, ToolSpec
+
+    class DenyAll:
+        def check(self, user_id, scope_key, risk):
+            return ConsentDecision.DENY
+
+        def degraded_behavior(self, scope_key, locale, fallback):
+            return "Paste the content yourself."
+
+    class UpstreamExecutor:
+        def __init__(self) -> None:
+            self.called = False
+
+        def invoke(self, spec, arguments, context):
+            self.called = True
+            raise AssertionError("upstream must not be contacted after a deny")
+
+    spec = ToolSpec(
+        name="fake.upstream.echo",
+        provider="mcp",
+        description="Fake upstream call for the deny-path guard",
+        input_schema={"type": "object", "properties": {}},
+        scope_key="tool:notion:read",
+        risk=Risk.READ,
+    )
+    executor = UpstreamExecutor()
+    registry = ToolRegistry()
+    registry.register(spec, executor)
+    router = ToolRouter(registry, DenyAll(), InMemoryAuditLog())
+    result: ToolResult = router.invoke(
+        user_id="user-1",
+        name=spec.name,
+        arguments={"q": "secret"},
+        context={"surface": "web", "task_id": None, "step_id": None},
+    )
+    assert executor.called is False
+    assert result.blocked is True
+    assert result.ok is False

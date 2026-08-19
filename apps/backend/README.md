@@ -31,10 +31,12 @@ CI 在跑测试之前会执行迁移。
 | `src/cogniwork/core/` | 跨模块基础：配置、错误模型、UUIDv7、时间、DB/Redis |
 | `src/cogniwork/auth/` | 注册/登录、Bearer JWT |
 | `src/cogniwork/consent/` | **Scope 注册表 + ConsentService（权限检查的唯一检查点）+ Postgres/Redis store** |
-| `src/cogniwork/api/v1/` | REST：`/health` `/auth/*` `/scopes` `/consent` |
+| `src/cogniwork/api/v1/` | REST：`/health` `/auth/*` `/scopes` `/consent` `/tasks` `/files` `/artifacts` |
+| `src/cogniwork/runtime/` | TaskEngine、LangGraph、builtin 工具、SSE、Model Router |
 | `src/cogniwork/migrate.py` | SQL 迁移工具（`python -m cogniwork.migrate`） |
 | `migrations/` | SQL 迁移 |
 | `tests/guards/` | **硬约束的可执行形式，见下** |
+| `tests/e2e/` | 零授权核心路径（P0-07 §8.3） |
 
 ## tests/guards/ 是什么
 

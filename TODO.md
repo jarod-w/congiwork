@@ -56,41 +56,33 @@
 
 ## 阶段 2 · 零授权闭环（第 2–3 周）⚡
 
-**这是第一个可演示的里程碑，也是第 3 周末容量复核的判据。**
-
-目标路径（`P0-07` §8.3 那条 E2E 的字面路径）：
-
-```
-注册 → 跳过全部访谈 → 上传 xlsx → 发起"整理成周报" → 拿到产物 → 下载
-```
-
-它同时满足几件事：是最小可用产品；不需要任何连接器、桌面端、Google 审核、Memory、Skill；是硬约束 5 的守护测试；能拿去给前置实验的用户看。
+**本阶段已完成**（2026-08-18）。目标路径「注册 → 跳过访谈 → 上传 xlsx → 整理成周报 → 下载」由 `tests/e2e/test_zero_auth_path.py` 守护。
 
 ### 后端 · Agent Runtime
 
-- [ ] ⚡ **Task 模型 + 状态机 + TaskEngine 门面** — `P0-03` §11 M1 — 4d
-- [ ] ⚡ **LangGraph 图 + checkpointer + 基础 act 循环** — `P0-03` §11 M2 — 5d
-- [ ] ⚡ **工具抽象层 + builtin 工具 + 权限钩子** — `P0-03` §11 M3 — 4d
+- [x] ⚡ **Task 模型 + 状态机 + TaskEngine 门面** — `P0-03` §11 M1 — 4d
+- [x] ⚡ **LangGraph 图 + checkpointer + 基础 act 循环** — `P0-03` §11 M2 — 5d
+- [x] ⚡ **工具抽象层 + builtin 工具 + 权限钩子** — `P0-03` §11 M3 — 4d
       - 🧪 **权限钩子接好后，启用 `tests/guards/test_no_bypass.py` 里那条 skip 的动态测试**
         （mock `ConsentService` 返 DENY，断言无上游调用发生 — `P0-07` §8.2）
       - builtin 只读工具 `scope_key=None`，走 `ConsentDecision.ALLOW` 那一支
-- [ ] ⚡ **SSE 事件流 + 断线补发** — `P0-03` §11 M5 — 3d
+- [x] ⚡ **SSE 事件流 + 断线补发** — `P0-03` §11 M5 — 3d
       - 事件词表已在 `packages/shared-types/src/events.ts`，两边必须一致（有守护拦）
-- [ ] **Model Router + LLMClient 抽象（Anthropic + OpenAI）** — `P0-03` §11 M6 — 4d
+- [x] **Model Router + LLMClient 抽象（Anthropic + OpenAI）** — `P0-03` §11 M6 — 4d
 
 ### 前端 · 任务工作台
 
-- [ ] ⚡ **布局骨架 + 会话/任务列表 + 输入框** — `P0-04` §10 M1 — 4d
+- [x] ⚡ **布局骨架 + 会话/任务列表 + 输入框** — `P0-04` §10 M1 — 4d
       - 三栏布局，右栏「凭什么」面板默认展开 — `P0-04` §3
       - ⚠️ **布局需容纳英文文案约 30% 的长度增长**（A8 落实要求 ③ / `P0-04` §5）
-- [ ] ⚡ **SSE 接入 + 流式消息渲染 + 性能优化** — `P0-04` §10 M2 — 5d
-- [ ] ⚡ **文件上传 + 产物面板** — `P0-04` §10 M5 — 4d
+- [x] ⚡ **SSE 接入 + 流式消息渲染 + 性能优化** — `P0-04` §10 M2 — 5d
+- [x] ⚡ **文件上传 + 产物面板** — `P0-04` §10 M5 — 4d
       - ⚠️ **上传不加 Scope**。Web 上传是每次显式选择，属 L1 — `00-conventions.md` §3 注、`config/scopes.yaml` 末尾说明
-- [ ] **执行时间线组件** — `P0-04` §10 M3 — 4d
+- [x] **执行时间线组件** — `P0-04` §10 M3 — 4d
 
 ### 验收
 
-- [ ] 🧪 **零授权 E2E 套件跑通且是绿的** — `P0-07` §8.3、§14 M6 — 2d
+- [x] 🧪 **零授权 E2E 套件跑通且是绿的** — `P0-07` §8.3、§14 M6 — 2d
       - 断言：全程 `consent_record` 表为空，任务成功完成
       - **这条挂了等同 P0 缺陷**（硬约束 5）
 
@@ -264,5 +256,9 @@
 - [x] **授权/撤销 API** —— `POST /api/v1/consent`、`DELETE /api/v1/consent/{scope}`；撤销 append `revoked`；`purge_data` 默认 false（B2）— `P0-07` §6.1、§6.3
 - [x] **认证** —— `POST /api/v1/auth/register`、`/login`、`GET /auth/me`；Bearer JWT — `00-conventions.md` §6
 - [x] **数据库迁移工具** —— `python -m cogniwork.migrate`；`0002_account.sql`；CI 在测试前跑迁移 — `00-conventions.md` §2
+- [x] **TaskEngine + LangGraph act 循环** —— 任务状态机、builtin 工具、权限闸门、SSE 断线补发 — `P0-03` M1/M2/M3/M5/M6
+- [x] **零授权工作台** —— `apps/web` 三栏布局 + 上传/产物/时间线；上传不加 Scope — `P0-04` M1/M2/M3/M5
+- [x] **零授权 E2E** —— `tests/e2e/test_zero_auth_path.py`：注册 → 上传 xlsx → 周报 → 下载，且 `consent_record` 为空 — `P0-07` §8.3
+- [x] **动态无旁路守护** —— mock DENY 后 Executor 不得出网 — `P0-07` §8.2
 
-**未完成的部分**：零授权 E2E 套件（`P0-07` §8.3）未写；动态版无旁路测试留了 skip 占位等 `P0-03` M3。Memory OS 落地前，撤销时 `purge_data=true` 会如实返回 `purge_supported: false`。
+**未完成的部分**：审批中断/恢复（`P0-03` M4）在阶段 3；Custom Provider / SSRF（M6b）在阶段 5。Memory OS 落地前，撤销时 `purge_data=true` 会如实返回 `purge_supported: false`。

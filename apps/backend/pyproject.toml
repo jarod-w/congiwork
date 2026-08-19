@@ -15,6 +15,12 @@ dependencies = [
     "PyJWT>=2.9",
     "argon2-cffi>=23.1",
     "email-validator>=2.2",
+    "python-multipart>=0.0.12",
+    "openpyxl>=3.1",
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "openai>=1.50",
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]
@@ -51,7 +57,7 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.File", "fastapi.Form"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/conftest.py" = ["E402"]

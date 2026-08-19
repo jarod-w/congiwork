@@ -1,0 +1,33 @@
+# Model Router 配置表（P0-03 §7）。按任务类型/上下文/能力路由，不写死在代码里。
+# Custom Provider（M6b / A6）不在本阶段；没有 API key 时运行时回落到 stub，
+# 这样零授权闭环（xlsx → 周报）在无模型密钥的环境里也能跑通。
+
+routes:
+  - match: { needs_vision: true }
+    model: primary.vision
+  - match: { latency_class: interactive, cost_tier: economy }
+    model: fast.small
+  - match: { context_tokens_gt: 200000 }
+    model: primary.long_context
+  - default: primary.standard
+
+providers:
+  primary:
+    vendor: anthropic
+    vision: claude-sonnet-4-20250514
+    standard: claude-sonnet-4-20250514
+    long_context: claude-sonnet-4-20250514
+  fallback:
+    vendor: openai
+    vision: gpt-4.1
+    standard: gpt-4.1
+    long_context: gpt-4.1
+  fast:
+    vendor: openai
+    small: gpt-4.1-mini
+  stub:
+    vendor: stub
+    standard: stub-local
+    small: stub-local
+    vision: stub-local
+    long_context: stub-local

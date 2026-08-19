@@ -3,15 +3,23 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .auth import router as auth_router
+from .config import router as config_router
 from .consent import router as consent_router
+from .conversations import router as conversations_router
+from .files import router as files_router
 from .health import router as health_router
 from .scopes import router as scopes_router
+from .tasks import router as tasks_router
 
 
 def build_v1_router() -> APIRouter:
     router = APIRouter()
     router.include_router(health_router)
+    router.include_router(config_router)
     router.include_router(auth_router)
     router.include_router(scopes_router)
     router.include_router(consent_router)
+    router.include_router(conversations_router)
+    router.include_router(tasks_router)
+    router.include_router(files_router)
     return router
