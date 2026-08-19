@@ -4,8 +4,7 @@
 # M3 order: Calendar + Notion first, Gmail last (A10). GitHub is the approval
 # path proving ground — one tool per risk level, not a full GitHub surface.
 #
-# Write tools for Gmail / Calendar / Notion are Phase 5 (P0-05 M5).
-# Do not register them here until those executors exist.
+# Write tools (P0-05 M5) are registered with the executors in tools/providers.py.
 
 version: 1
 
@@ -54,6 +53,64 @@ providers:
             time_min: {type: string}
             time_max: {type: string}
             duration_minutes: {type: integer}
+      - name: gcal.create_event
+        mcp_name: create_event
+        description: Create a calendar event.
+        scope_key: tool:gcal:write
+        risk: write
+        preview_renderer: text
+        timeout_s: 30
+        retryable: true
+        input_schema:
+          type: object
+          properties:
+            summary: {type: string}
+            start: {type: string}
+            end: {type: string}
+            attendees: {type: array, items: {type: string}}
+          required: [summary, start, end]
+      - name: gcal.update_event
+        mcp_name: update_event
+        description: Update a calendar event.
+        scope_key: tool:gcal:write
+        risk: write
+        preview_renderer: text
+        timeout_s: 30
+        retryable: true
+        input_schema:
+          type: object
+          properties:
+            event_id: {type: string}
+            summary: {type: string}
+            start: {type: string}
+            end: {type: string}
+          required: [event_id]
+      - name: gcal.delete_event
+        mcp_name: delete_event
+        description: Delete a calendar event. This cannot be undone from here.
+        scope_key: tool:gcal:write
+        risk: irreversible
+        preview_renderer: text
+        timeout_s: 30
+        retryable: false
+        input_schema:
+          type: object
+          properties:
+            event_id: {type: string}
+          required: [event_id]
+      - name: gcal.send_invites
+        mcp_name: send_invites
+        description: Send calendar invites to attendees. This cannot be undone.
+        scope_key: tool:gcal:write
+        risk: irreversible
+        preview_renderer: text
+        timeout_s: 30
+        retryable: false
+        input_schema:
+          type: object
+          properties:
+            event_id: {type: string}
+          required: [event_id]
 
   - id: notion
     display_name: Notion
@@ -97,6 +154,62 @@ providers:
             database_id: {type: string}
             query: {type: string}
           required: [database_id]
+      - name: notion.create_page
+        mcp_name: create_page
+        description: Create a Notion page in a parent the user shared.
+        scope_key: tool:notion:write
+        risk: write
+        preview_renderer: text
+        timeout_s: 30
+        retryable: true
+        input_schema:
+          type: object
+          properties:
+            parent_id: {type: string}
+            title: {type: string}
+            content: {type: string}
+          required: [parent_id, title]
+      - name: notion.update_page
+        mcp_name: update_page
+        description: Update a Notion page the user shared.
+        scope_key: tool:notion:write
+        risk: write
+        preview_renderer: text
+        timeout_s: 30
+        retryable: true
+        input_schema:
+          type: object
+          properties:
+            page_id: {type: string}
+            title: {type: string}
+          required: [page_id]
+      - name: notion.append_block
+        mcp_name: append_block
+        description: Append a paragraph block to a Notion page.
+        scope_key: tool:notion:write
+        risk: write
+        preview_renderer: text
+        timeout_s: 30
+        retryable: true
+        input_schema:
+          type: object
+          properties:
+            page_id: {type: string}
+            text: {type: string}
+          required: [page_id, text]
+      - name: notion.delete_block
+        mcp_name: delete_block
+        description: Delete a Notion block. This cannot be undone from here.
+        scope_key: tool:notion:write
+        risk: irreversible
+        preview_renderer: text
+        timeout_s: 30
+        retryable: false
+        input_schema:
+          type: object
+          properties:
+            block_id: {type: string}
+          required: [block_id]
 
   - id: gmail
     display_name: Gmail
@@ -140,6 +253,49 @@ providers:
           properties:
             query: {type: string}
             max_results: {type: integer}
+      - name: gmail.create_draft
+        mcp_name: create_draft
+        description: Save a draft in the mailbox. It is not sent.
+        scope_key: tool:gmail:write
+        risk: write
+        preview_renderer: email
+        timeout_s: 30
+        retryable: true
+        input_schema:
+          type: object
+          properties:
+            to: {type: array, items: {type: string}}
+            subject: {type: string}
+            body: {type: string}
+          required: [to, subject, body]
+      - name: gmail.send_message
+        mcp_name: send_message
+        description: Send an email from the connected mailbox. This cannot be undone.
+        scope_key: tool:gmail:send
+        risk: irreversible
+        preview_renderer: email
+        timeout_s: 30
+        retryable: false
+        input_schema:
+          type: object
+          properties:
+            to: {type: array, items: {type: string}}
+            subject: {type: string}
+            body: {type: string}
+          required: [to, subject, body]
+      - name: gmail.trash_message
+        mcp_name: trash_message
+        description: Move a message to trash.
+        scope_key: tool:gmail:send
+        risk: irreversible
+        preview_renderer: text
+        timeout_s: 30
+        retryable: false
+        input_schema:
+          type: object
+          properties:
+            message_id: {type: string}
+          required: [message_id]
 
   - id: github
     display_name: GitHub

@@ -14,13 +14,22 @@ from .types import ChatMessage, LLMResult, ToolCallDelta
 class OpenAICompatClient:
     vendor = "openai"
 
-    def __init__(self, api_key: str, model: str, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+        *,
+        http_client: Any | None = None,
+    ) -> None:
         from openai import OpenAI
 
         self.model = model
         kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
+        if http_client is not None:
+            kwargs["http_client"] = http_client
         self._client = OpenAI(**kwargs)
 
     def complete(

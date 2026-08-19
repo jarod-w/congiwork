@@ -114,6 +114,12 @@ class StubTransport:
                 {},
             )
         if "gmail.googleapis.com" in url:
+            if "/drafts" in url:
+                return HttpResponse(200, {"id": "d1"}, {})
+            if "/messages/send" in url or url.endswith("/send"):
+                return HttpResponse(200, {"id": "m-sent"}, {})
+            if "/trash" in url:
+                return HttpResponse(200, {"id": "m1"}, {})
             if "/messages/" in url and url.rstrip("/").split("/")[-1] != "messages":
                 return HttpResponse(
                     200,
@@ -130,6 +136,18 @@ class StubTransport:
                 {},
             )
         if "googleapis.com/calendar" in url or "googleapis.com/calendar/v3" in url:
+            if method.upper() == "DELETE":
+                return HttpResponse(200, {}, {})
+            if method.upper() in {"POST", "PATCH"}:
+                return HttpResponse(
+                    200,
+                    {
+                        "id": "e1",
+                        "summary": (json_body or {}).get("summary") or "Standup",
+                        "start": {"dateTime": "2026-08-19T09:00:00Z"},
+                    },
+                    {},
+                )
             if "/events/" in url and not url.endswith("/events"):
                 return HttpResponse(
                     200,
@@ -154,6 +172,8 @@ class StubTransport:
                 {},
             )
         if "api.notion.com" in url:
+            if method.upper() == "DELETE":
+                return HttpResponse(200, {}, {})
             if "/search" in url:
                 return HttpResponse(
                     200,

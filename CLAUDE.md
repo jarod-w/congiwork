@@ -13,16 +13,17 @@ apps/backend/             ✅ core/ + consent/ + auth/ + runtime/ + api/v1
   src/cogniwork/core/       配置、错误模型、UUIDv7、UTC 时间、DB/Redis
   src/cogniwork/consent/    Scope 注册表 + ConsentService + Postgres/Redis store
   src/cogniwork/auth/       注册/登录、Bearer JWT
-  src/cogniwork/runtime/    TaskEngine 门面、LangGraph、builtin 工具、SSE、LLM 路由
+  src/cogniwork/runtime/    TaskEngine 门面、LangGraph、builtin 工具、SSE、LLM 路由、治理、Skill 驱动
   src/cogniwork/profile/    个人画像 + 访谈状态机 + 注入缓存
-  src/cogniwork/tools/      MCP Client、Vault、OAuth、连接器适配器
+  src/cogniwork/tools/      MCP Client、Vault、OAuth、连接器适配器、韧性
+  src/cogniwork/skill/      Skill CRUD、草稿、预置示例、预检、执行
   src/cogniwork/migrate.py  SQL 迁移工具
-  migrations/               0001–0006（consent / account / task / memory / profile / tools）
+  migrations/               0001–0007（consent / account / task / memory / profile / tools / skill）
   tests/guards/           ✅ 硬约束的可执行形式，见下
   tests/e2e/              ✅ 零授权核心路径（P0-07 §8.3）
 packages/shared-types/    ✅ 错误码、SSE 事件、审批动作
 packages/shared-ui/       ✅ 工作台展示组件（无网络/路由）
-apps/web/                 ✅ 任务工作台（三栏 + SSE + 上传/产物 + 画像/连接）
+apps/web/                 ✅ 任务工作台（三栏 + SSE + 上传/产物 + 画像/连接 + Skill）
 apps/desktop-shell/       ⬜ 未创建
 packages/mcp-connectors/  ✅ stdio 入口说明（实现在 backend tools/）
 ```

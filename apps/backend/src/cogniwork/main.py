@@ -31,8 +31,11 @@ from .runtime.approvals import ApprovalService, InMemoryApprovalStore, PostgresA
 from .runtime.digest import InMemoryAuditLog, PostgresAuditLog
 from .runtime.engine import TaskEngine
 from .runtime.events import InMemoryEventBroker, RedisEventBroker
+from .runtime.llm.router import ModelRouter, RoutingRequest
 from .runtime.store import InMemoryTaskStore, PostgresTaskStore
 from .runtime.tools.registry import build_runtime_registry
+from .skill.service import SkillService
+from .skill.store import InMemorySkillStore, PostgresSkillStore
 from .tools.executor import McpExecutor
 from .tools.http import StubTransport
 from .tools.service import ToolService
@@ -61,6 +64,7 @@ async def lifespan(app: FastAPI):
         app.state.approval_store = InMemoryApprovalStore()
         app.state.profile_store = InMemoryProfileStore()
         app.state.tool_store = InMemoryToolStore()
+        app.state.skill_store = InMemorySkillStore()
     elif settings.store_backend == "postgres":
         pool = open_pool(settings)
         redis = open_redis(settings)
@@ -73,6 +77,7 @@ async def lifespan(app: FastAPI):
         app.state.approval_store = PostgresApprovalStore(pool)
         app.state.profile_store = PostgresProfileStore(pool)
         app.state.tool_store = PostgresToolStore(pool)
+        app.state.skill_store = PostgresSkillStore(pool)
     else:
         raise RuntimeError(f"unknown store_backend: {settings.store_backend!r}")
     app.state.auth_service = AuthService(app.state.account_store)
@@ -82,6 +87,7 @@ async def lifespan(app: FastAPI):
     _wire_memory(app)
     _wire_profile(app)
     _wire_tools(app)
+    _wire_skills(app)
     _wire_runtime(app)
     yield
     redis = getattr(app.state, "redis", None)
@@ -162,7 +168,9 @@ def _wire_runtime(app: FastAPI) -> None:
         redis = app.state.redis
         app.state.event_broker = RedisEventBroker(redis, memory_events) if redis else memory_events
     app.state.tools.audit = app.state.audit_log
-    app.state.task_engine = TaskEngine(
+    router = ModelRouter(settings)
+    router.custom_lookup = lambda user_id, request: _custom_client(app, user_id, request)
+    engine = TaskEngine(
         store=app.state.task_store,
         events=app.state.event_broker,
         consent=app.state.consent_service,
@@ -172,6 +180,56 @@ def _wire_runtime(app: FastAPI) -> None:
         approvals=app.state.approvals,
         profile=app.state.profile,
         tools=build_runtime_registry(app.state.mcp_executor),
+        router=router,
+    )
+    engine.skills = app.state.skills
+    app.state.task_engine = engine
+
+
+def _wire_skills(app: FastAPI) -> None:
+    app.state.skills = SkillService(app.state.skill_store, consent_store=app.state.consent_store)
+
+
+def _custom_client(app: FastAPI, user_id: str, request: RoutingRequest):
+    from uuid import UUID
+
+    from cogniwork.api.v1.llm import open_api_key
+    from cogniwork.runtime.llm.clients import OpenAICompatClient
+    from cogniwork.runtime.llm.probe import custom_route_allowed
+    from cogniwork.runtime.llm.ssrf import assert_public_https, pinned_httpx_client
+
+    provider = app.state.skills.store.get_provider(UUID(user_id))
+    granted = False
+    for state in app.state.consent_store.list_current(user_id):
+        if state.scope_key == "llm:custom:route" and state.action.value == "granted":
+            granted = True
+            break
+    allowed, reason = custom_route_allowed(
+        granted=granted,
+        capabilities=provider.capabilities if provider else None,
+        needs_tool_use=request.needs_tool_use,
+    )
+    router = app.state.task_engine.router if hasattr(app.state, "task_engine") else None
+    attempts = []
+    if router is not None:
+        attempts = getattr(router, "custom_attempts", None)
+        if attempts is None:
+            router.custom_attempts = []
+            attempts = router.custom_attempts
+    if not allowed:
+        if router is not None and reason == "no_tool_use":
+            router.last_custom_skip = (
+                "Your configured model does not support tool use. "
+                "Tasks that need tools still use the platform default."
+            )
+        return None
+    resolved = assert_public_https(provider.base_url)
+    attempts.append({"base_url": provider.base_url, "model": provider.model})
+    return OpenAICompatClient(
+        open_api_key(provider),
+        provider.model,
+        base_url=resolved.safe_url,
+        http_client=pinned_httpx_client(resolved),
     )
 
 

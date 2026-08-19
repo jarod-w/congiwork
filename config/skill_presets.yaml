@@ -1,0 +1,159 @@
+# Preset Skills (P0-06 §5.5). Copy-on-use; never executed as-is.
+#
+# Constraint 4: this file MUST NOT name a specific connector. The send step
+# in preset 4 stays tool-unset so CASA outcomes do not force a content rev.
+# Four of five presets need zero Scopes.
+
+version: 1
+
+presets:
+  - id: channel-weekly
+    name: Channel data weekly report
+    description: Turn an uploaded channel × metric spreadsheet into a weekly summary with period-over-period change and three takeaways.
+    trigger: {type: manual}
+    input_schema:
+      type: object
+      properties:
+        period: {type: string, title: Reporting period}
+      required: [period]
+    workflow:
+      - id: s1
+        type: collect_input
+        title: Confirm the reporting period
+        fields: [period]
+      - id: s2
+        type: llm
+        title: Summarize the uploaded table by channel with period-over-period change
+        instruction: >
+          Read the uploaded spreadsheet. Produce a weekly report: per-channel
+          totals, period-over-period change, and three takeaways. Write a
+          markdown artifact the user can download.
+        uses_memory: false
+      - id: s3
+        type: approval
+        title: Let me confirm the report before you keep it
+        preview_from: s2
+      - id: s4
+        type: llm
+        title: Export the confirmed report as a downloadable file
+        instruction: Write the confirmed report to an artifact named weekly-report.md.
+
+  - id: feedback-tagging
+    name: Classify and tag user feedback
+    description: Batch-classify pasted or uploaded feedback into themes and rank the top issues.
+    trigger: {type: manual}
+    input_schema:
+      type: object
+      properties:
+        taxonomy: {type: string, title: Classification labels (optional)}
+      required: []
+    workflow:
+      - id: s1
+        type: collect_input
+        title: Confirm the classification labels, or use a default set
+        fields: [taxonomy]
+      - id: s2
+        type: llm
+        title: Classify each piece of feedback and rank the top issues
+        instruction: >
+          Classify the uploaded or pasted feedback. If taxonomy is provided,
+          use those labels; otherwise propose a short set. Output a table and
+          a ranked list of top issues. You can change the labels in this
+          instruction next time.
+      - id: s3
+        type: approval
+        title: Let me confirm the tags before keeping the table
+        preview_from: s2
+
+  - id: multi-platform-rewrite
+    name: Rewrite for several platforms
+    description: Take one draft and produce versions that match each platform's length and tone.
+    trigger: {type: keyword, patterns: ["rewrite", "adapt this", "platform versions"]}
+    input_schema:
+      type: object
+      properties:
+        platforms:
+          type: array
+          title: Platforms
+          items:
+            type: string
+            enum: [email, linkedin, x, blog]
+          default: [email, linkedin]
+        source_text: {type: string, title: Original draft}
+      required: [source_text]
+    workflow:
+      - id: s1
+        type: collect_input
+        title: Confirm the original draft and which platforms to write for
+        fields: [source_text, platforms]
+      - id: s2
+        type: llm
+        title: Rewrite the draft for the first platform
+        instruction: Rewrite source_text for the first selected platform. Match typical length and tone. Keep the facts.
+      - id: s3
+        type: llm
+        title: Produce the remaining platform versions
+        instruction: Produce a version for each remaining platform. Label each clearly.
+
+  - id: quarterly-channel-review
+    name: Quarterly channel review
+    description: Pull the quarter's channel conversion, find the three largest changes, and send a summary to the people who need it.
+    trigger: {type: keyword, patterns: ["quarterly review", "channel review"]}
+    input_schema:
+      type: object
+      properties:
+        quarter: {type: string, title: Quarter}
+        channels: {type: string, title: Channel scope, default: all}
+      required: [quarter]
+    workflow:
+      - id: s1
+        type: collect_input
+        title: Confirm the quarter and which channels to include
+        fields: [quarter, channels]
+      - id: s2
+        type: tool
+        title: Pull that quarter's channel conversion figures
+        tool: null
+        needs_clarification: true
+        args_hint: {quarter: "{{quarter}}", channels: "{{channels}}"}
+        on_error: ask_user
+      - id: s3
+        type: llm
+        title: Summarize by channel and name the three largest period-over-period changes
+        instruction: >
+          Output a table with channel / leads / conversion / period-over-period
+          change. Highlight the three largest changes and suggest likely reasons.
+        uses_memory: true
+      - id: s4
+        type: approval
+        title: Let me confirm the report before anything is sent
+        preview_from: s3
+      - id: s5
+        type: tool
+        title: Send it to the people who need it
+        tool: null
+        needs_clarification: true
+        on_error: stop
+
+  - id: monthly-report-draft
+    name: Monthly report first draft
+    description: Draft this month's report from last month's artifact and what you have told me to remember. Worth more the second time you run it.
+    trigger: {type: manual}
+    input_schema:
+      type: object
+      properties:
+        month: {type: string, title: Month}
+      required: []
+    workflow:
+      - id: s1
+        type: llm
+        title: Draft this month's report from last month's output and remembered context
+        instruction: >
+          Look at prior monthly report artifacts and remembered preferences.
+          Draft this month's report in the same outline. Leave blanks where
+          this month's numbers are missing instead of inventing them.
+        uses_memory: true
+      - id: s2
+        type: approval
+        title: Let me confirm the draft
+        preview_from: s1

@@ -56,9 +56,12 @@ class TaskEngine:
         self.used_memories: dict[str, list] = {}
         self.blocked_scopes: dict[str, str] = {}
         self.pending_calls: dict[str, PendingToolCall] = {}
+        self.skill_cursors: dict[str, Any] = {}
+        self.skills: Any | None = None
         self._cancel: set[str] = set()
         self._graph = compile_graph(self)
         self._lock = threading.Lock()
+        self.max_concurrent = 3
 
     def is_cancelled(self, task_id: str) -> bool:
         return task_id in self._cancel
@@ -84,10 +87,23 @@ class TaskEngine:
         conversation_id: UUID | None = None,
         surface: Surface = Surface.WEB,
         wait: bool = False,
+        skill_id: UUID | None = None,
+        skill_inputs: dict[str, Any] | None = None,
+        dry_run: bool = False,
+        nesting_depth: int = 0,
     ) -> Task:
         text = message.strip()
         if not text:
             raise InvalidRequest("Write a task before sending.")
+        running = [
+            item
+            for item in self.store.list_tasks(user_id)
+            if item.status.value in {"created", "planning", "running"}
+        ]
+        if len(running) >= self.max_concurrent:
+            raise InvalidRequest(
+                "You already have three tasks running. Wait for one to finish, or cancel one."
+            )
         ids = [UUID(fid) for fid in (file_ids or [])]
         for fid in ids:
             if self.store.get_file(user_id, fid) is None:
@@ -108,8 +124,15 @@ class TaskEngine:
             intent=_intent_from(text),
             status=TaskStatus.CREATED,
             surface=surface,
-            skill_id=None,
-            input={"message": text, "file_ids": [str(i) for i in ids]},
+            skill_id=skill_id,
+            input={
+                "message": text,
+                "file_ids": [str(i) for i in ids],
+                "skill_id": str(skill_id) if skill_id else None,
+                "skill_inputs": skill_inputs or {},
+                "dry_run": dry_run,
+                "nesting_depth": nesting_depth,
+            },
             result=None,
             error=None,
             thread_id=str(task_id),
@@ -256,6 +279,21 @@ class TaskEngine:
             _set_status(self, task, TaskStatus.RUNNING)
             return task
 
+        if pending.tool_name == "skill.approval":
+            self.pending_calls.pop(str(task.id), None)
+            cursor = self.skill_cursors.get(str(task.id))
+            if cursor is not None and action is not ApprovalAction.REJECT:
+                cursor.advance()
+            _set_status(self, task, TaskStatus.RUNNING)
+            thread = threading.Thread(
+                target=self._continue_after_approval,
+                args=(task, pending.iteration),
+                daemon=True,
+                name=f"task-{task.id}-resume",
+            )
+            thread.start()
+            return task
+
         context = {
             "store": self.store,
             "user_id": str(task.user_id),
@@ -384,7 +422,7 @@ class TaskEngine:
         scopes = sorted({s.scope_key for s in task.steps if s.scope_key})
         return {
             "memories": memories,
-            "skills": [],
+            "skills": self._skill_refs(task),
             "tools": tools_used,
             "scopes": [key for key in scopes if key],
             "files": files,
@@ -452,6 +490,22 @@ class TaskEngine:
                 "degraded_behavior": copy.degraded_behavior,
             },
         }
+
+    def _skill_refs(self, task: Task) -> list[dict[str, Any]]:
+        skill_id = task.skill_id or (task.input or {}).get("skill_id")
+        if not skill_id or self.skills is None:
+            return []
+        try:
+            payload = self.skills.get(task.user_id, UUID(str(skill_id)))
+        except Exception:
+            return []
+        if isinstance(payload, dict) and "skill" in payload:
+            skill = payload.get("skill")
+        else:
+            skill = payload
+        if not isinstance(skill, dict):
+            return []
+        return [{"id": skill.get("id"), "name": skill.get("name"), "source": skill.get("source")}]
 
 
 def _title_from(message: str) -> str:
