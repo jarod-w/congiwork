@@ -61,12 +61,16 @@ def client():
             engine.used_memories.clear()
             engine.messages.clear()
             engine._cancel.clear()
+            getattr(engine, "skill_cursors", {}).clear()
         profile_store = getattr(app.state, "profile_store", None)
         if profile_store is not None and hasattr(profile_store, "clear"):
             profile_store.clear()
         tool_store = getattr(app.state, "tool_store", None)
         if tool_store is not None and hasattr(tool_store, "clear"):
             tool_store.clear()
+        skill_store = getattr(app.state, "skill_store", None)
+        if skill_store is not None and hasattr(skill_store, "clear"):
+            skill_store.clear()
         idem = getattr(app.state, "idempotency", None)
         if isinstance(idem, dict):
             idem.clear()

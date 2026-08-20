@@ -6,17 +6,24 @@ import {
   Composer,
   ConsentCard,
   ContextPanel,
+  CustomProviderSettings,
+  EmptyState,
   MemoryBrowser,
   MessageStream,
   ProfilePage,
   PrivacyCenter,
+  SkillEditor,
+  SkillLibrary,
   TaskList,
   Timeline,
   WorkspaceShell,
   type ApprovalCardData,
   type ContextBundle,
+  type CustomProviderView,
   type MemoryItem,
+  type PresetView,
   type ScopeCard,
+  type SkillView,
   type StepItem,
   type TaskSummary,
   type ProfileFieldView,
@@ -24,6 +31,7 @@ import {
   type ProviderView,
   type ConnectionView,
   type ActivityView,
+  type TemplateView,
 } from '@cogniwork/shared-ui';
 import { api, clearToken, downloadArtifact, getToken, setToken } from './api';
 import { catalogFor } from './i18n';
@@ -46,7 +54,7 @@ interface TaskDetail {
   artifacts: ContextBundle['artifacts'];
 }
 
-type View = 'workspace' | 'memory' | 'profile' | 'connections' | 'privacy';
+type View = 'workspace' | 'memory' | 'profile' | 'connections' | 'privacy' | 'skills';
 
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -90,6 +98,15 @@ export function App() {
   const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [connectionActivity, setConnectionActivity] = useState<ActivityView[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
+  const [skills, setSkills] = useState<SkillView[]>([]);
+  const [presets, setPresets] = useState<PresetView[]>([]);
+  const [editingSkill, setEditingSkill] = useState<SkillView | null>(null);
+  const [skillMissing, setSkillMissing] = useState<string[]>([]);
+  const [skillUnresolved, setSkillUnresolved] = useState<{ step_id: string; title: string; candidates: string[] }[]>([]);
+  const [templates, setTemplates] = useState<TemplateView[]>([]);
+  const [customProvider, setCustomProvider] = useState<CustomProviderView | null>(null);
+  const [customGranted, setCustomGranted] = useState(false);
+  const [paramInputs, setParamInputs] = useState<Record<string, string>>({});
   const deltaRef = useRef('');
   const frameRef = useRef<number | null>(null);
 
@@ -127,7 +144,18 @@ export function App() {
   useEffect(() => {
     if (!token || view !== 'connections') return;
     void refreshConnections();
+    void refreshCustomProvider();
   }, [token, view]);
+
+  useEffect(() => {
+    if (!token || view !== 'skills') return;
+    void refreshSkills();
+  }, [token, view]);
+
+  useEffect(() => {
+    if (!token) return;
+    void api<{ templates: TemplateView[] }>('/api/v1/templates').then((body) => setTemplates(body.templates));
+  }, [token]);
 
   useEffect(() => {
     if (!token || !activeId) return;
@@ -245,6 +273,30 @@ export function App() {
     setConnections(live.connections);
   }
 
+  async function refreshSkills() {
+    const body = await api<{ skills: SkillView[]; presets: PresetView[] }>('/api/v1/skills/library');
+    setSkills(body.skills);
+    setPresets(body.presets);
+  }
+
+  async function refreshCustomProvider() {
+    const body = await api<{ provider: CustomProviderView | null; scope_granted: boolean }>('/api/v1/llm/custom');
+    setCustomProvider(body.provider);
+    setCustomGranted(body.scope_granted);
+  }
+
+  async function openSkill(id: string) {
+    const body = await api<{ skill: SkillView }>(`/api/v1/skills/${id}`);
+    const check = await api<{
+      missing_scopes: string[];
+      unresolved_tools: { step_id: string; title: string; candidates: string[] }[];
+    }>(`/api/v1/skills/${id}/precheck`, { method: 'POST' });
+    setEditingSkill(body.skill);
+    setSkillMissing(check.missing_scopes);
+    setSkillUnresolved(check.unresolved_tools);
+    setView('skills');
+  }
+
   async function authenticate(path: '/api/v1/auth/register' | '/api/v1/auth/login') {
     setError(null);
     try {
@@ -349,6 +401,9 @@ export function App() {
             </button>
             <button type="button" className={view === 'profile' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('profile')}>
               {copy.profile}
+            </button>
+            <button type="button" className={view === 'skills' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('skills')}>
+              {copy.skills}
             </button>
             <button type="button" className={view === 'connections' ? 'cw-btn cw-btn-primary cw-btn-block' : 'cw-btn cw-btn-block'} onClick={() => setView('connections')}>
               {copy.connections}
@@ -492,6 +547,7 @@ export function App() {
             }}
           />
         ) : view === 'connections' ? (
+          <>
           <ConnectionManager
             copy={copy}
             providers={providers}
@@ -520,6 +576,104 @@ export function App() {
               });
             }}
           />
+          <CustomProviderSettings
+            copy={copy}
+            provider={customProvider}
+            granted={customGranted}
+            onEnableScope={() => {
+              void api('/api/v1/scopes').then((body: { scopes: ScopeCard[] }) => {
+                const scope = body.scopes.find((item) => item.key === 'llm:custom:route');
+                if (!scope) return;
+                void api('/api/v1/consent', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    scope_key: scope.key,
+                    consent_text_version: scope.consent_text_version,
+                    always_allow: true,
+                  }),
+                }).then(() => void refreshCustomProvider());
+              });
+            }}
+            onSave={(form) => {
+              void api('/api/v1/llm/custom', { method: 'PUT', body: JSON.stringify(form) }).then(
+                () => void refreshCustomProvider(),
+              );
+            }}
+            onDelete={() => {
+              void api('/api/v1/llm/custom', { method: 'DELETE' }).then(() => void refreshCustomProvider());
+            }}
+          />
+          </>
+        ) : view === 'skills' ? (
+          editingSkill ? (
+            <SkillEditor
+              copy={copy}
+              skill={editingSkill}
+              missingScopes={skillMissing}
+              unresolved={skillUnresolved}
+              onChange={setEditingSkill}
+              onSave={() => {
+                void api(`/api/v1/skills/${editingSkill.id}`, {
+                  method: 'PATCH',
+                  body: JSON.stringify({
+                    name: editingSkill.name,
+                    description: editingSkill.description,
+                    workflow: editingSkill.workflow,
+                    trigger: editingSkill.trigger,
+                    input_schema: editingSkill.input_schema,
+                  }),
+                }).then(() => void openSkill(editingSkill.id));
+              }}
+              onActivate={() => {
+                void api(`/api/v1/skills/${editingSkill.id}`, {
+                  method: 'PATCH',
+                  body: JSON.stringify({ status: 'active' }),
+                }).then(() => void openSkill(editingSkill.id));
+              }}
+              onRun={(dryRun) => {
+                void api<{ id: string }>(`/api/v1/skills/${editingSkill.id}/run`, {
+                  method: 'POST',
+                  body: JSON.stringify({ inputs: paramInputs, dry_run: dryRun }),
+                }).then((task) => {
+                  void api('/api/v1/events', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      name: dryRun ? 'skill_created' : 'skill_reused',
+                      payload: { skill_id: editingSkill.id },
+                    }),
+                  });
+                  setActiveId(task.id);
+                  setView('workspace');
+                });
+              }}
+            />
+          ) : (
+            <SkillLibrary
+              copy={copy}
+              skills={skills}
+              presets={presets}
+              onOpen={(id) => void openSkill(id)}
+              onCopyPreset={(id) => {
+                void api<{ skill: SkillView }>('/api/v1/skills/draft', {
+                  method: 'POST',
+                  body: JSON.stringify({ preset_id: id }),
+                }).then((body) => void openSkill(body.skill.id));
+              }}
+              onNew={() => {
+                const description = window.prompt(copy.skillHint);
+                if (!description) return;
+                void api<{ draft: Omit<SkillView, 'id' | 'run_count' | 'success_count' | 'success_rate' | 'version'> }>(
+                  '/api/v1/skills/draft',
+                  { method: 'POST', body: JSON.stringify({ description }) },
+                ).then((body) => {
+                  void api<{ skill: SkillView }>('/api/v1/skills', {
+                    method: 'POST',
+                    body: JSON.stringify(body.draft),
+                  }).then((created) => void openSkill(created.skill.id));
+                });
+              }}
+            />
+          )
         ) : view === 'privacy' && privacy ? (
           <PrivacyCenter
             copy={copy}
@@ -641,9 +795,36 @@ export function App() {
                   }}
                   onSkip={() => undefined}
                 />
+                <button
+                  type="button"
+                  className="cw-btn"
+                  onClick={() => {
+                    void api<{ draft: Record<string, unknown> }>('/api/v1/skills/draft', {
+                      method: 'POST',
+                      body: JSON.stringify({ task_id: detail.id }),
+                    }).then((body) => {
+                      void api<{ skill: SkillView }>('/api/v1/skills', {
+                        method: 'POST',
+                        body: JSON.stringify(body.draft),
+                      }).then((created) => void openSkill(created.skill.id));
+                    });
+                  }}
+                >
+                  {copy.saveAsSkill}
+                </button>
               </>
             ) : (
-              <p className="cw-muted">{copy.emptyTasks}</p>
+              <EmptyState
+                copy={copy}
+                templates={templates}
+                onUse={(template) => {
+                  setDraft(template.prompt);
+                  void api('/api/v1/events', {
+                    method: 'POST',
+                    body: JSON.stringify({ name: 'template_used', payload: { template_id: template.id } }),
+                  });
+                }}
+              />
             )}
             <Composer
               copy={copy}

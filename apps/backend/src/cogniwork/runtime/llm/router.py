@@ -52,9 +52,18 @@ class ModelRouter:
             return self._resolve(default)
         return ModelRef("stub", "stub-local")
 
-    def client_for(self, request: RoutingRequest) -> LLMClient:
+    def client_for(self, request: RoutingRequest, user_id: str | None = None) -> LLMClient:
+        custom = self._try_custom(request, user_id)
+        if custom is not None:
+            return custom
         chosen = self.choose(request)
         return build_client(chosen, self._settings)
+
+    def _try_custom(self, request: RoutingRequest, user_id: str | None) -> LLMClient | None:
+        lookup = getattr(self, "custom_lookup", None)
+        if not user_id or lookup is None:
+            return None
+        return lookup(user_id, request)
 
     def _resolve(self, dotted: str) -> ModelRef:
         provider_name, slot = dotted.split(".", 1)

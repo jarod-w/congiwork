@@ -77,6 +77,7 @@ def export_user(
     settings_store: Any,
     profile: Any | None = None,
     tools: Any | None = None,
+    skills: Any | None = None,
 ) -> dict[str, Any]:
     tasks = [
         {
@@ -117,6 +118,7 @@ def export_user(
         "settings": settings_out(settings_store.get(user_id)),
         "profile": profile.export(user_id) if profile is not None else {"profiles": []},
         "connections": tools.list_connections(user_id) if tools is not None else [],
+        "skills": skills.list(user_id) if skills is not None else [],
     }
 
 
@@ -160,6 +162,7 @@ def delete_account_data(
     account_store: Any,
     profile: Any | None = None,
     tools: Any | None = None,
+    skills: Any | None = None,
 ) -> dict[str, Any]:
     """除 consent_record 外全部物理删除；consent_record 匿名化保留（B1）。"""
     memories = memory.purge_all(user_id)
@@ -167,6 +170,9 @@ def delete_account_data(
     connections = 0
     if tools is not None and hasattr(tools.store, "delete_for_user"):
         connections = tools.store.delete_for_user(user_id)
+    skill_count = 0
+    if skills is not None and hasattr(skills.store, "delete_for_user"):
+        skill_count = skills.store.delete_for_user(user_id)
     tasks = delete_tasks_for_user(task_store, user_id)
     settings_store.delete(user_id)
     if hasattr(approval_store, "delete_for_user"):
@@ -183,6 +189,7 @@ def delete_account_data(
             "tasks": tasks,
             "profiles": profiles,
             "connections": connections,
+            "skills": skill_count,
             "account": True,
         },
         "consent_records_anonymized": anonymized,

@@ -72,7 +72,17 @@ export function ContextPanel({ copy, bundle, open, onToggle, onDownload }: Props
           </section>
           <section>
             <h2>{copy.skills}</h2>
-            <p className="cw-muted">{copy.noneYet}</p>
+            {bundle?.skills?.length ? (
+              <ul>
+                {bundle.skills.map((skill) => (
+                  <li key={String(skill.id ?? skill.name)}>
+                    {String(skill.name ?? copy.noneYet)}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="cw-muted">{copy.noneYet}</p>
+            )}
           </section>
           <ArtifactPanel copy={copy} artifacts={bundle?.artifacts ?? []} onDownload={onDownload} />
         </>

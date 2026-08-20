@@ -135,6 +135,19 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
     task = runtime.store.get_task(UUID(state["user_id"]), UUID(state["task_id"]))
     if task is None:
         return {**state, "failed": True}
+    if _timed_out(task):
+        task.error = {
+            "code": "internal_error",
+            "message": "This task ran longer than 30 minutes, so I stopped.",
+            "retryable": True,
+        }
+        runtime.store.save_task(task)
+        return {**state, "failed": True, "timed_out": True}
+    from cogniwork.runtime.skill_driver import drive_skill_act
+
+    driven = drive_skill_act(runtime, state)
+    if driven is not None:
+        return driven
     iteration = int(state.get("iteration") or 0) + 1
     if iteration > runtime.step_limit:
         task.error = {
@@ -145,7 +158,8 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
         runtime.store.save_task(task)
         return {**state, "iteration": iteration, "failed": True}
 
-    specs = runtime.tools.specs()
+    specs = _available_specs(runtime)
+    cost_tier = "economy" if _daily_capped(runtime, task) else "standard"
     client = runtime.router.client_for(
         RoutingRequest(
             task_intent=task.intent,
@@ -153,8 +167,9 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
             needs_vision=False,
             needs_tool_use=True,
             latency_class="interactive",
-            cost_tier="standard",
-        )
+            cost_tier=cost_tier,
+        ),
+        user_id=str(task.user_id),
     )
     step = _open_step(
         runtime,
@@ -197,7 +212,22 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
 
     task.token_in += result.token_in
     task.token_out += result.token_out
+    from cogniwork.runtime.governance import cost_for_tokens, record_usage, should_pause_for_cost
+
+    added = cost_for_tokens(result.token_in, result.token_out)
+    task.cost_usd = float(task.cost_usd or 0) + added
+    skills = getattr(runtime, "skills", None)
+    if skills is not None:
+        record_usage(skills.store, task.user_id, added, result.token_in, result.token_out)
     runtime.store.save_task(task)
+    if should_pause_for_cost(task, runtime.settings):
+        task.error = {
+            "code": "budget_exceeded",
+            "message": f"This task has spent ${float(task.cost_usd):.2f}. Continue?",
+            "retryable": True,
+        }
+        runtime.store.save_task(task)
+        return {**state, "iteration": iteration, "failed": True}
     _finish_step(
         runtime,
         step,
@@ -267,15 +297,27 @@ def _finalize(runtime: Any, state: GraphState) -> GraphState:
         _set_status(runtime, task, TaskStatus.CANCELLED)
         terminal = "cancelled"
     elif state.get("failed"):
+        from cogniwork.runtime.governance import finalize_result
+
+        summary = (task.error or {}).get("message") or _last_assistant_text(
+            runtime.messages.get(str(task.id), [])
+        )
+        task.result = finalize_result(task, summary, artifacts)
         _set_status(runtime, task, TaskStatus.FAILED)
         terminal = "failed"
+    elif state.get("timed_out"):
+        _set_status(runtime, task, TaskStatus.TIMED_OUT)
+        terminal = "timed_out"
     else:
-        task.result = {
-            "summary": _last_assistant_text(runtime.messages.get(str(task.id), [])),
-            "artifact_ids": [str(a.id) for a in artifacts],
-            "completed_steps": [s.title for s in task.steps if s.status.value == "succeeded"],
-            "skipped_steps": [s.title for s in task.steps if s.status.value == "skipped"],
-        }
+        from cogniwork.runtime.governance import finalize_result
+
+        summary = _last_assistant_text(runtime.messages.get(str(task.id), []))
+        task.result = finalize_result(task, summary, artifacts)
+        if task.result.get("failed_steps"):
+            leftover = "; ".join(task.result.get("failed_steps") or [])
+            task.result["summary"] = (
+                f"{summary}\n\nI did not finish everything. Not done: {leftover}."
+            ).strip()
         _set_status(runtime, task, TaskStatus.SUCCEEDED)
         terminal = "succeeded"
     task.ended_at = now()
@@ -324,6 +366,7 @@ def _finalize(runtime: Any, state: GraphState) -> GraphState:
         artifact_ids=[str(a.id) for a in artifacts],
     )
     runtime.events.close(str(task.id))
+    _record_skill_run(runtime, task, terminal)
     return state
 
 
@@ -371,6 +414,7 @@ def _run_tool(
             "surface": task.surface.value,
             "file_ids": task.input.get("file_ids") or [],
             "memory": getattr(runtime, "memory", None),
+            "dry_run": bool((task.input or {}).get("dry_run")),
         },
     )
     if result.needs_approval:
@@ -568,3 +612,55 @@ def _repeated_tool_calls(messages: list[ChatMessage]) -> int:
     if names[-1] == names[-2] == names[-3]:
         return 3
     return 0
+
+
+def _timed_out(task: Any) -> bool:
+    started = task.started_at
+    if started is None:
+        return False
+    return (now() - started).total_seconds() > 30 * 60
+
+
+def _daily_capped(runtime: Any, task: Any) -> bool:
+    from cogniwork.runtime.governance import daily_over_cap
+
+    skills = getattr(runtime, "skills", None)
+    if skills is None:
+        return False
+    return daily_over_cap(skills.store, task.user_id, runtime.settings)
+
+
+def _available_specs(runtime: Any) -> list[ToolSpec]:
+    specs = runtime.tools.specs()
+    resilience = getattr(runtime.tool_router, "resilience", None)
+    if resilience is None:
+        return specs
+    open_providers = resilience.open_providers()
+    if not open_providers:
+        return specs
+    kept = []
+    for spec in specs:
+        provider = spec.name.split(".", 1)[0] if spec.provider == "mcp" else spec.provider
+        if provider in open_providers:
+            continue
+        kept.append(spec)
+    return kept
+
+
+def _record_skill_run(runtime: Any, task: Any, terminal: str) -> None:
+    skill_id = task.skill_id or (task.input or {}).get("skill_id")
+    skills = getattr(runtime, "skills", None)
+    if not skill_id or skills is None:
+        return
+    try:
+        skills.mark_run(task.user_id, UUID(str(skill_id)), success=terminal == "succeeded")
+    except Exception:
+        return
+    if terminal == "succeeded":
+        for step in task.steps:
+            if step.scope_key:
+                skills.record_event(
+                    task.user_id,
+                    "scope_executed",
+                    {"scope": step.scope_key, "ok": True, "task_id": str(task.id)},
+                )

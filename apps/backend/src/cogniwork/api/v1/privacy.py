@@ -64,6 +64,7 @@ def export_all(
         settings_store=request.app.state.settings_store,
         profile=getattr(request.app.state, "profile", None),
         tools=getattr(request.app.state, "tools", None),
+        skills=getattr(request.app.state, "skills", None),
     )
 
 
@@ -109,4 +110,5 @@ def delete_account(
         account_store=request.app.state.account_store,
         profile=getattr(request.app.state, "profile", None),
         tools=getattr(request.app.state, "tools", None),
+        skills=getattr(request.app.state, "skills", None),
     )

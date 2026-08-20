@@ -1,0 +1,35 @@
+# Cold-start task templates (P0-04 §4.5). All zero-auth. No SaaS names.
+
+version: 1
+
+templates:
+  - id: weekly-channel-report
+    title: Turn channel data into a weekly report
+    prompt: Turn this spreadsheet into a weekly report. Summarize by channel, show period-over-period change, and give three takeaways.
+    anchor: data_report
+    needs_file: true
+  - id: feedback-classify
+    title: Classify this batch of user feedback
+    prompt: Classify this feedback into themes, count each theme, and rank the top issues.
+    anchor: data
+    needs_file: false
+  - id: campaign-retro
+    title: Turn campaign results into a retro
+    prompt: Write a retro with four sections — goal, result, gap, next steps — from the notes or data I provide.
+    anchor: report
+    needs_file: false
+  - id: outbound-email
+    title: Draft an outbound email from these notes
+    prompt: Draft a send-ready outbound email from these notes. Include a subject line and a body I can copy.
+    anchor: copy
+    needs_file: false
+  - id: multi-platform
+    title: Adapt this copy for several platforms
+    prompt: Rewrite this copy into versions for email, LinkedIn, and a short post. Keep the facts; match each platform's length.
+    anchor: copy
+    needs_file: false
+  - id: rewrite-in-my-voice
+    title: Rewrite this in my usual voice
+    prompt: Rewrite this in my usual voice and list what you changed.
+    anchor: copy
+    needs_file: false

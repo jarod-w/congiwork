@@ -23,7 +23,7 @@ export interface ArtifactItem {
 
 export interface ContextBundle {
   memories: MemoryRef[];
-  skills: unknown[];
+  skills: { id?: string; name?: string; source?: string }[];
   tools: string[];
   scopes: string[];
   files: { id: string; filename: string; size_bytes: number }[];
@@ -179,4 +179,23 @@ export interface Copy {
   changeJob: string;
   profileHint: string;
   connectionHint: string;
+  skillHint: string;
+  newSkill: string;
+  presets: string;
+  useThis: string;
+  dryRun: string;
+  saveSkill: string;
+  parameters: string;
+  steps: string;
+  addStep: string;
+  newStep: string;
+  toolUnset: string;
+  needsClarification: string;
+  neededPermissions: string;
+  activateSkill: string;
+  runSkill: string;
+  saveAsSkill: string;
+  customModel: string;
+  customModelHint: string;
+  customNoTools: string;
 }

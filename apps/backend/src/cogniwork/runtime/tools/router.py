@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Any
 
 from cogniwork.core.config import get_settings
+from cogniwork.core.errors import RateLimited
 from cogniwork.runtime.digest import digest_args
 
 from .hook import Gate, fallback_copy, gate_tool_call
@@ -23,6 +24,9 @@ class ToolRouter:
         self._registry = registry
         self._consent = consent
         self._audit = audit
+        from cogniwork.tools.resilience import Resilience
+
+        self.resilience = Resilience()
 
     def resolve(self, name: str) -> ToolSpec | None:
         found = self._registry.get(name)
@@ -98,13 +102,36 @@ class ToolRouter:
         if found is None:
             return ToolResult(name, False, f"Unknown tool: {name}")
         spec, executor = found
+        dry_run = bool(context.get("dry_run"))
+        if dry_run and spec.provider == "mcp" and spec.risk.value in {"write", "irreversible"}:
+            return ToolResult(
+                name,
+                True,
+                f"Dry-run: would call {spec.name}. No external write happened.",
+                {"dry_run": True, "tool": spec.name, "risk": spec.risk.value},
+            )
         digest = digest_args(arguments)
         surface = str(context.get("surface") or "web")
         task_id = context.get("task_id")
         step_id = context.get("step_id")
         started = perf_counter()
         try:
-            result = executor.invoke(spec, arguments, context)
+            result = self.resilience.call(spec, executor.invoke, arguments, context)
+        except RateLimited as exc:
+            duration = int((perf_counter() - started) * 1000)
+            self._audit.record(
+                user_id=user_id,
+                task_id=str(task_id) if task_id else None,
+                step_id=str(step_id) if step_id else None,
+                scope_key=spec.scope_key,
+                surface=surface,
+                action=spec.name,
+                target_digest=digest,
+                result="failed",
+                error_code="rate_limited",
+                duration_ms=duration,
+            )
+            return ToolResult(name, False, str(exc), {"error": "rate_limited"})
         except Exception as exc:
             duration = int((perf_counter() - started) * 1000)
             self._audit.record(
