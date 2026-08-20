@@ -24,6 +24,8 @@ docker compose up -d
 
 CI 在跑测试之前会执行迁移。
 
+生产部署（单 worker、环境变量、反向代理、备份 72h）见仓库根目录 [`docs/deploy.md`](../../docs/deploy.md)。
+
 ## 目录
 
 | 路径 | 内容 |

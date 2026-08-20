@@ -67,6 +67,7 @@ pnpm --filter @cogniwork/web dev
 | 路径 | 内容 | 何时读 |
 |---|---|---|
 | `docs/ai_platform_plan.md` | 产品规划 v3——做什么、为什么、优先级、路线 | 涉及范围/优先级/取舍时 |
+| `docs/deploy.md` | 生产部署：环境变量、单进程限制、迁移、反向代理、备份 72h | 上线或搭生产环境时 |
 | `docs/design/README.md` | 设计文档索引、依赖图、交付顺序、**相对规划的偏离清单** | 开始任何模块工作前 |
 | `docs/design/00-conventions.md` | 跨模块公共约定 | **写任何代码前必读** |
 | `docs/design/P0-*.md` | Phase 1 必交模块设计 | 实现对应模块时 |
