@@ -130,6 +130,10 @@ cogniwork-desktop-agent/     (separate repo)
 
 ---
 
+## Deploy
+
+Production runbook (Chinese): [`docs/deploy.md`](docs/deploy.md). Local development: [`apps/backend/README.md`](apps/backend/README.md) and [`apps/web/README.md`](apps/web/README.md).
+
 ## Status
 
 Early-stage product in active planning and development. Interfaces, schemas, and repository boundaries described above are subject to change as Phase 1 validation progresses.
