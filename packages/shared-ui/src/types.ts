@@ -21,6 +21,19 @@ export interface ArtifactItem {
   size_bytes: number;
 }
 
+/** 产物预览。四种 kind，解析在后端（apps/backend/src/cogniwork/runtime/preview.py）。 */
+export interface ArtifactPreview {
+  kind: 'table' | 'markdown' | 'text' | 'image' | 'none';
+  reason?: string;
+  sheet_name?: string | null;
+  header?: string[];
+  rows?: string[][];
+  row_count?: number;
+  text?: string;
+  data_uri?: string;
+  truncated?: boolean;
+}
+
 export interface ContextBundle {
   memories: MemoryRef[];
   skills: { id?: string; name?: string; source?: string }[];
@@ -198,4 +211,13 @@ export interface Copy {
   customModel: string;
   customModelHint: string;
   customNoTools: string;
+  searchTasks: string;
+  searchResults: string;
+  noMatches: string;
+  preview: string;
+  noPreview: string;
+  previewTruncated: string;
+  previewClipped: string;
+  adminBoundary: string;
+  complianceBoundary: string;
 }

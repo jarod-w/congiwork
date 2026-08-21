@@ -118,6 +118,17 @@ export const catalogs: Record<string, Copy> = {
       'Task content, including files, profile, and retrieved memory, is sent to the address you enter. We do not control that service.',
     customNoTools:
       'This model does not support tool use. Tasks that need tools still use the platform default. We will not silently parse text as a tool call.',
+    searchTasks: 'Search past tasks',
+    searchResults: 'Search results',
+    noMatches: 'No task matches that. Try a word you used in the request.',
+    preview: 'Preview',
+    noPreview: 'No preview for this format yet. Download it to open it.',
+    previewTruncated: 'Showing the first rows of {n}.',
+    previewClipped: 'Preview shortened. Download the file for the full text.',
+    adminBoundary:
+      'Only you can turn these on. There is no way for an administrator to enable data collection on your behalf — that is a design constraint, not a feature we have yet to build.',
+    complianceBoundary:
+      'We keep an auditable record of who enabled which collection scope and when. We do not make compliance decisions for your employer, and we do not issue compliance conclusions.',
   },
   'zh-CN': {
     appName: 'CogniWork',
@@ -230,6 +241,17 @@ export const catalogs: Record<string, Copy> = {
     customModel: '你自己的模型服务',
     customModelHint: '任务内容（含文件、画像、被检索的记忆）会发到你填写的地址。我们不控制那个服务。',
     customNoTools: '这个模型不支持工具调用。需要工具的任务仍走平台默认模型，不会静默改成文本解析。',
+    searchTasks: '搜索历史任务',
+    searchResults: '搜索结果',
+    noMatches: '没有匹配的任务。试试你当时说过的词。',
+    preview: '预览',
+    noPreview: '这个格式还不能预览，下载后打开。',
+    previewTruncated: '共 {n} 行，这里只显示前几行。',
+    previewClipped: '预览已截断。完整内容请下载文件。',
+    adminBoundary:
+      '这些开关只能由你自己开。产品不提供「管理员代员工开启采集」的能力 —— 这是设计约束，不是暂未实现。',
+    complianceBoundary:
+      '我们只保留「谁在什么时间开启了什么采集范围」的可审计记录，不代替你所在的企业做合规判断，也不提供合规结论。',
   },
 };
 

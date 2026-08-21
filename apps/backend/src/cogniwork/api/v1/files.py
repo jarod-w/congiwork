@@ -109,6 +109,24 @@ def download_artifact(
     )
 
 
+@router.get("/artifacts/{artifact_id}/preview")
+def artifact_preview(
+    request: Request,
+    artifact_id: UUID,
+    account: Annotated[Account, Depends(require_account)],
+) -> dict[str, object]:
+    """产物预览（P0-04 WS-5）。解析在服务端，见 runtime.preview 的注释。"""
+    from cogniwork.runtime.preview import build_preview
+
+    artifact = _engine(request).store.get_artifact(account.id, artifact_id)
+    if artifact is None:
+        raise NotFound("Artifact not found.")
+    return {
+        **artifact_meta(artifact),
+        "preview": build_preview(artifact.filename, artifact.content_type, artifact.content),
+    }
+
+
 @router.get("/artifacts/{artifact_id}/meta")
 def artifact_info(
     request: Request,

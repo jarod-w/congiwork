@@ -6,6 +6,7 @@ decided only on the runtime tool path.
 
 from __future__ import annotations
 
+import base64
 import secrets
 from typing import Any
 from urllib.parse import urlencode
@@ -14,7 +15,7 @@ from uuid import UUID
 from cogniwork.consent.registry import get_registry
 from cogniwork.core.clock import now
 from cogniwork.core.config import Settings, get_settings
-from cogniwork.core.errors import InvalidRequest, NotFound
+from cogniwork.core.errors import AppError, InvalidRequest, NotFound
 from cogniwork.tools.catalog import ToolCatalog, load_catalog
 from cogniwork.tools.http import HttpTransport, StubTransport
 from cogniwork.tools.store import (
@@ -153,17 +154,82 @@ class ToolService:
             raise NotFound("Connection not found.")
         return self.start_connect(user_id, item.provider, scopes, surface=surface)
 
-    def disconnect(self, user_id: UUID, connection_id: UUID, *, surface: str = "web") -> None:
+    def disconnect(
+        self, user_id: UUID, connection_id: UUID, *, surface: str = "web"
+    ) -> dict[str, Any]:
+        """断开：撤第三方授权 + 物理删凭据 + 撤 Scope（P0-05 §5、§10 验收 2）。
+
+        顺序不能反。撤销要用 token，删完再撤就没得撤了 —— 那种做法下用户点了
+        「断开」，Google / GitHub 那边的授权还活到过期为止，用户看到的和实际
+        发生的不是一回事。上游撤销失败也照样删本地凭据：本地不留才是我们能
+        保证的部分，失败原因记进 `last_error` 并回给调用方。
+        """
         item = self.store.get_connection(user_id, connection_id)
         if item is None:
             raise NotFound("Connection not found.")
+        revoked, detail = self._revoke_upstream(item)
         self.store.delete_credential(item.id)
         item.status = "revoked"
         item.updated_at = now()
+        item.last_error = None if revoked else {"code": "revoke_failed", "detail": detail}
         self.store.upsert_connection(item)
         if self.consent is not None:
             for scope_key in item.granted_scopes:
                 self.consent.revoke(user_id=str(user_id), scope_key=scope_key, surface=surface)
+        return {"upstream_revoked": revoked, "detail": detail}
+
+    def _revoke_upstream(self, item: ToolConnection) -> tuple[bool, str]:
+        """调第三方的 revoke 端点。token 只在这一次调用期间存在于内存。"""
+        cred = self.store.get_credential(item.id)
+        if cred is None:
+            return True, "no_credential_stored"
+        try:
+            bundle = open_bundle(cred.ciphertext, cred.dek_wrapped, self._master)
+        except Exception:
+            # 解不开就撤不了，但也不该挡住断开。
+            return False, "credential_unreadable"
+        kind = self.catalog.provider(item.provider).oauth_kind
+        # refresh token 优先：Google 撤 refresh token 会一并失效由它派生的 access token。
+        token = str(bundle.get("refresh_token") or bundle.get("access_token") or "")
+        if not token:
+            return True, "no_token_stored"
+        try:
+            return self._call_revoke(kind, token)
+        except AppError as exc:
+            return False, exc.code.value if hasattr(exc.code, "value") else str(exc.code)
+        except Exception as exc:
+            return False, type(exc).__name__
+
+    def _call_revoke(self, kind: str, token: str) -> tuple[bool, str]:
+        if kind == "google":
+            # https://oauth2.googleapis.com/revoke?token=…（官方文档的形式）
+            self.transport.request(
+                "POST",
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            return True, "revoked"
+        if kind == "github":
+            # OAuth App 的授权撤销走 client 凭据的 Basic auth，不是用户 token。
+            self.transport.request(
+                "DELETE",
+                f"https://api.github.com/applications/{self.settings.github_client_id}/grant",
+                headers={
+                    "Authorization": _basic_auth(
+                        self.settings.github_client_id, self.settings.github_client_secret
+                    ),
+                    "Accept": "application/vnd.github+json",
+                },
+                json_body={"access_token": token},
+            )
+            return True, "revoked"
+        if kind == "notion":
+            # Notion 没有 token 撤销端点（截至 2026-08 的 API）。
+            # 用户要彻底断开需要在 Notion 侧移除集成 —— 这一点由 UI 明示，
+            # 不假装我们撤掉了（连接管理页 §8 的断开确认文案）。
+            return False, "provider_has_no_revoke_endpoint"
+        return False, "unknown_oauth_kind"
 
     def token_for(self, user_id: UUID, provider: str) -> str | None:
         item = self.store.active_for_provider(user_id, provider)
@@ -361,6 +427,11 @@ class ToolService:
 
     def _redirect_uri(self) -> str:
         return self.settings.public_base_url.rstrip("/") + "/api/v1/tools/oauth/callback"
+
+
+def _basic_auth(user: str, secret: str) -> str:
+    raw = f"{user}:{secret}".encode()
+    return "Basic " + base64.b64encode(raw).decode()
 
 
 def connection_out(item: ToolConnection) -> dict[str, Any]:

@@ -1,0 +1,216 @@
+{
+  "_about": [
+    "Recorded request/response contracts for the four Phase 1 connectors (P0-05 M6).",
+    "This file is the single place that writes down what each adapter sends upstream and",
+    "which response fields it reads. When a provider publishes a breaking change, edit the",
+    "fixture here and tests/test_provider_contracts.py shows exactly which adapters break.",
+    "depends_on lists the response fields the adapter actually consumes; the test proves each",
+    "one is load-bearing by removing it and requiring the result to change."
+  ],
+  "gcal.list_events": {
+    "arguments": {"time_min": "2026-08-01T00:00:00Z", "time_max": "2026-08-08T00:00:00Z", "query": "standup", "max_results": 5},
+    "request": {
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      "params": {"timeMin": "2026-08-01T00:00:00Z", "timeMax": "2026-08-08T00:00:00Z", "q": "standup", "maxResults": 5, "singleEvents": "true", "orderBy": "startTime"}
+    },
+    "response": {"items": [{"id": "e1", "summary": "Standup"}, {"id": "e2", "summary": "Launch review"}]},
+    "depends_on": ["items"],
+    "expect": {"ok": true, "content_contains": ["Standup", "Launch review"], "data": {"count": 2}}
+  },
+  "gcal.get_event": {
+    "arguments": {"event_id": "e1"},
+    "request": {"method": "GET", "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/e1"},
+    "response": {"id": "e1", "summary": "Standup"},
+    "depends_on": ["summary"],
+    "expect": {"ok": true, "content_contains": ["Standup"], "data": {"id": "e1"}}
+  },
+  "gcal.find_free_slots": {
+    "arguments": {"time_min": "2026-08-01T00:00:00Z", "time_max": "2026-08-02T00:00:00Z", "duration_minutes": 45},
+    "request": {
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      "params": {"timeMin": "2026-08-01T00:00:00Z", "timeMax": "2026-08-02T00:00:00Z", "singleEvents": "true"}
+    },
+    "response": {"items": [{"id": "e1"}, {"id": "e2"}, {"id": "e3"}]},
+    "depends_on": ["items"],
+    "expect": {"ok": true, "data": {"busy_count": 3, "duration_minutes": 45}}
+  },
+  "gcal.create_event": {
+    "arguments": {"summary": "Launch review", "start": "2026-08-20T09:00:00Z", "end": "2026-08-20T10:00:00Z", "attendees": ["a@example.com"]},
+    "request": {
+      "method": "POST",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      "json": {"summary": "Launch review", "start": {"dateTime": "2026-08-20T09:00:00Z"}, "end": {"dateTime": "2026-08-20T10:00:00Z"}, "attendees": [{"email": "a@example.com"}]}
+    },
+    "response": {"id": "e9"},
+    "depends_on": ["id"],
+    "expect": {"ok": true, "content_contains": ["e9"], "data": {"id": "e9"}}
+  },
+  "gcal.update_event": {
+    "arguments": {"event_id": "e1", "summary": "Renamed"},
+    "request": {"method": "PATCH", "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/e1", "json": {"summary": "Renamed"}},
+    "response": {"id": "e1"},
+    "depends_on": [],
+    "_note": "适配器对响应 id 有回落（用请求里的 event_id），所以这里没有承重字段",
+    "expect": {"ok": true, "content_contains": ["e1"], "data": {"id": "e1"}}
+  },
+  "gcal.delete_event": {
+    "arguments": {"event_id": "e1"},
+    "request": {"method": "DELETE", "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/e1"},
+    "response": {},
+    "depends_on": [],
+    "expect": {"ok": true, "content_contains": ["deleted"], "data": {"id": "e1"}}
+  },
+  "gcal.send_invites": {
+    "arguments": {"event_id": "e1"},
+    "request": {
+      "method": "POST",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/e1/sendUpdates",
+      "params": {"sendUpdates": "all"}
+    },
+    "response": {},
+    "depends_on": [],
+    "expect": {"ok": true, "content_contains": ["Invites sent"], "data": {"id": "e1"}}
+  },
+  "notion.search": {
+    "arguments": {"query": "launch plan"},
+    "request": {"method": "POST", "url": "https://api.notion.com/v1/search", "json": {"query": "launch plan"}},
+    "response": {"results": [{"id": "p1", "object": "page"}]},
+    "depends_on": ["results"],
+    "expect": {"ok": true, "content_contains": ["Found 1"], "data": {"count": 1, "ids": ["p1"]}}
+  },
+  "notion.get_page": {
+    "arguments": {"page_id": "p1"},
+    "request": {"method": "GET", "url": "https://api.notion.com/v1/pages/p1"},
+    "response": {"id": "p1", "url": "https://notion.so/p1"},
+    "depends_on": ["url"],
+    "expect": {"ok": true, "content_contains": ["https://notion.so/p1"], "data": {"id": "p1"}}
+  },
+  "notion.query_database": {
+    "arguments": {"database_id": "db1"},
+    "request": {"method": "POST", "url": "https://api.notion.com/v1/databases/db1/query", "json": {}},
+    "response": {"results": [{"id": "row-1"}, {"id": "row-2"}]},
+    "depends_on": ["results"],
+    "expect": {"ok": true, "content_contains": ["2 rows"], "data": {"count": 2}}
+  },
+  "notion.create_page": {
+    "arguments": {"parent_id": "p0", "title": "Weekly report"},
+    "request": {
+      "method": "POST",
+      "url": "https://api.notion.com/v1/pages",
+      "json": {"parent": {"page_id": "p0"}, "properties": {"title": {"title": [{"text": {"content": "Weekly report"}}]}}}
+    },
+    "response": {"id": "p9"},
+    "depends_on": ["id"],
+    "expect": {"ok": true, "content_contains": ["p9"], "data": {"id": "p9"}}
+  },
+  "notion.update_page": {
+    "arguments": {"page_id": "p1", "title": "Renamed"},
+    "request": {"method": "PATCH", "url": "https://api.notion.com/v1/pages/p1", "json": {}},
+    "response": {},
+    "depends_on": [],
+    "expect": {"ok": true, "content_contains": ["p1"], "data": {"id": "p1"}}
+  },
+  "notion.append_block": {
+    "arguments": {"page_id": "p1", "text": "Q3 numbers"},
+    "request": {
+      "method": "PATCH",
+      "url": "https://api.notion.com/v1/blocks/p1/children",
+      "json": {"children": [{"paragraph": {"rich_text": [{"text": {"content": "Q3 numbers"}}]}}]}
+    },
+    "response": {},
+    "depends_on": [],
+    "expect": {"ok": true, "content_contains": ["Appended"], "data": {"id": "p1"}}
+  },
+  "notion.delete_block": {
+    "arguments": {"block_id": "b1"},
+    "request": {"method": "DELETE", "url": "https://api.notion.com/v1/blocks/b1"},
+    "response": {},
+    "depends_on": [],
+    "expect": {"ok": true, "content_contains": ["deleted"], "data": {"id": "b1"}}
+  },
+  "gmail.search_messages": {
+    "arguments": {"query": "from:boss", "max_results": 20},
+    "request": {
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+      "params": {"q": "from:boss", "maxResults": 20}
+    },
+    "response": {"messages": [{"id": "m1"}, {"id": "m2"}]},
+    "depends_on": ["messages"],
+    "expect": {"ok": true, "content_contains": ["Found 2"], "data": {"count": 2, "ids": ["m1", "m2"]}}
+  },
+  "gmail.get_message": {
+    "arguments": {"message_id": "m1"},
+    "request": {
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/m1",
+      "params": {"format": "metadata"}
+    },
+    "response": {"id": "m1", "snippet": "Quarterly numbers attached"},
+    "depends_on": ["snippet"],
+    "expect": {"ok": true, "content_contains": ["Quarterly numbers attached"], "data": {"id": "m1", "length": 26}}
+  },
+  "gmail.list_threads": {
+    "arguments": {"query": "launch", "max_results": 10},
+    "request": {
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads",
+      "params": {"q": "launch", "maxResults": 10}
+    },
+    "response": {"threads": [{"id": "t1"}]},
+    "depends_on": ["threads"],
+    "expect": {"ok": true, "content_contains": ["Found 1"], "data": {"count": 1}}
+  },
+  "gmail.create_draft": {
+    "arguments": {"to": ["a@example.com"], "subject": "Hi", "body": "Hello"},
+    "request": {"method": "POST", "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts", "json_keys": ["message"]},
+    "response": {"id": "d1"},
+    "depends_on": ["id"],
+    "expect": {"ok": true, "content_contains": ["d1", "not sent"], "data": {"id": "d1", "to_count": 1}}
+  },
+  "gmail.send_message": {
+    "arguments": {"to": ["a@example.com", "b@example.com"], "subject": "Hi", "body": "Hello"},
+    "request": {"method": "POST", "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", "json_keys": ["raw"]},
+    "response": {"id": "m-sent"},
+    "depends_on": ["id"],
+    "expect": {"ok": true, "content_contains": ["Email sent"], "data": {"id": "m-sent", "to_count": 2}}
+  },
+  "gmail.trash_message": {
+    "arguments": {"message_id": "m1"},
+    "request": {"method": "POST", "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/m1/trash"},
+    "response": {},
+    "depends_on": [],
+    "expect": {"ok": true, "content_contains": ["trash"], "data": {"id": "m1"}}
+  },
+  "github.search_code": {
+    "arguments": {"query": "repo:acme/app TODO"},
+    "request": {"method": "GET", "url": "https://api.github.com/search/code", "params": {"q": "repo:acme/app TODO"}},
+    "response": {"total_count": 3, "items": [{"name": "app.py", "path": "src/app.py"}]},
+    "depends_on": ["total_count"],
+    "expect": {"ok": true, "content_contains": ["Found 1"], "data": {"count": 3}}
+  },
+  "github.create_issue": {
+    "arguments": {"owner": "acme", "repo": "app", "title": "Flaky test", "body": "It fails on CI."},
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/repos/acme/app/issues",
+      "json": {"title": "Flaky test", "body": "It fails on CI."}
+    },
+    "response": {"number": 12, "html_url": "https://github.com/acme/app/issues/12"},
+    "depends_on": ["number", "html_url"],
+    "expect": {"ok": true, "content_contains": ["#12"], "data": {"number": 12, "url": "https://github.com/acme/app/issues/12"}}
+  },
+  "github.merge_pr": {
+    "arguments": {"owner": "acme", "repo": "app", "number": 7, "commit_title": "Merge #7"},
+    "request": {
+      "method": "PUT",
+      "url": "https://api.github.com/repos/acme/app/pulls/7/merge",
+      "json": {"commit_title": "Merge #7"}
+    },
+    "response": {"merged": true, "sha": "abc123"},
+    "depends_on": ["merged", "sha"],
+    "expect": {"ok": true, "content_contains": ["merged"], "data": {"sha": "abc123"}}
+  }
+}

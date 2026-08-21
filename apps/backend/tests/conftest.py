@@ -10,6 +10,9 @@ os.environ.setdefault("COGNIWORK_IP_HASH_PEPPER", "test-ip-pepper")
 os.environ.setdefault("COGNIWORK_LLM_PROVIDER", "stub")
 os.environ.setdefault("COGNIWORK_OAUTH_STUB", "true")
 os.environ.setdefault("COGNIWORK_VAULT_MASTER_KEY", "test-vault-master-key-32bytes!!")
+# 单测走进程内 MCP client：stdio 子进程拿不到测试注入的 StubTransport 实例，
+# 断言不到「发出了哪些请求」。stdio 那条路径由 test_mcp_transport.py 单独验。
+os.environ.setdefault("COGNIWORK_MCP_TRANSPORT", "inprocess")
 
 import pytest
 from fastapi.testclient import TestClient

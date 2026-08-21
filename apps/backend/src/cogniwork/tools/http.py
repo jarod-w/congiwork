@@ -90,6 +90,11 @@ class StubTransport:
                 }
             )
         )
+        # 断开连接时的第三方 revoke（P0-05 §10 验收 2）。真实端点都返回空 200。
+        if "oauth2.googleapis.com/revoke" in url:
+            return HttpResponse(200, {}, {})
+        if "api.github.com/applications/" in url and "/grant" in url:
+            return HttpResponse(204, {}, {})
         if "oauth2.googleapis.com/token" in url or "github.com/login/oauth/access_token" in url:
             return HttpResponse(
                 200,

@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     task_step_limit: int = 25
     task_cost_usd_limit: float = 0.50
     daily_cost_usd_limit: float = 5.00
+    # 全局在飞 LLM 调用数（P0-03 §8 末行）。per-(user, provider) 桶管不到
+    # 跨用户的总量，而供应商的账号级限流是全局的。
+    llm_global_concurrency: int = 16
     model_routes_path: str = ""
     memory_budget_tokens: int = 2000
 
@@ -72,7 +75,10 @@ class Settings(BaseSettings):
     notion_client_secret: str = ""
     github_client_id: str = ""
     github_client_secret: str = ""
-    mcp_transport: str = "inprocess"
+    # stdio：连接器跑在独立进程里，崩溃不带上 API，凭据不跨用户共享（P0-05 §3）。
+    # inprocess：给单测用 —— 子进程拿不到测试注入的 transport 对象。
+    # streamable-http 未实现（偏离 11）。
+    mcp_transport: str = "stdio"
 
 
 @lru_cache(maxsize=1)

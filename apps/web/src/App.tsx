@@ -18,6 +18,7 @@ import {
   Timeline,
   WorkspaceShell,
   type ApprovalCardData,
+  type ArtifactPreview,
   type ContextBundle,
   type CustomProviderView,
   type MemoryItem,
@@ -64,6 +65,7 @@ export function App() {
   const [mode, setMode] = useState<'signin' | 'register'>('register');
   const [error, setError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [taskSearch, setTaskSearch] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [bundle, setBundle] = useState<ContextBundle | null>(null);
@@ -107,6 +109,10 @@ export function App() {
   const [customProvider, setCustomProvider] = useState<CustomProviderView | null>(null);
   const [customGranted, setCustomGranted] = useState(false);
   const [paramInputs, setParamInputs] = useState<Record<string, string>>({});
+  // 换技能就清掉上一份参数 —— 否则上一个技能填的值会被带进下一个技能的运行请求。
+  useEffect(() => setParamInputs({}), [editingSkill?.id]);
+  const [openArtifact, setOpenArtifact] = useState<string | null>(null);
+  const [artifactPreviews, setArtifactPreviews] = useState<Record<string, ArtifactPreview>>({});
   const deltaRef = useRef('');
   const frameRef = useRef<number | null>(null);
 
@@ -123,8 +129,10 @@ export function App() {
 
   useEffect(() => {
     if (!token) return;
-    void refreshTasks();
-  }, [token]);
+    // 首次加载与搜索走同一条路。250ms 去抖：搜索是一次请求，不该按键就发。
+    const timer = window.setTimeout(() => void refreshTasks(taskSearch), taskSearch ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [token, taskSearch]);
 
   useEffect(() => {
     if (!token || view !== 'memory') return;
@@ -211,9 +219,22 @@ export function App() {
     };
   }, [token, activeId]);
 
-  async function refreshTasks() {
-    const body = await api<{ tasks: TaskSummary[] }>('/api/v1/tasks');
+  async function refreshTasks(query: string = taskSearch) {
+    // 搜索在服务端做（WS-1）：本地只有已加载的那一页，过滤它会漏掉真正的历史。
+    const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : '';
+    const body = await api<{ tasks: TaskSummary[] }>(`/api/v1/tasks${suffix}`);
     setTasks(body.tasks);
+  }
+
+  async function loadPreview(id: string) {
+    if (openArtifact === id) {
+      setOpenArtifact(null);
+      return;
+    }
+    setOpenArtifact(id);
+    if (artifactPreviews[id]) return;
+    const body = await api<{ preview: ArtifactPreview }>(`/api/v1/artifacts/${id}/preview`);
+    setArtifactPreviews((current) => ({ ...current, [id]: body.preview }));
   }
 
   async function refreshMemories() {
@@ -417,6 +438,8 @@ export function App() {
               copy={copy}
               tasks={tasks}
               activeId={activeId}
+              search={taskSearch}
+              onSearch={setTaskSearch}
               onSelect={setActiveId}
               onNew={() => {
                 setActiveId(null);
@@ -581,7 +604,7 @@ export function App() {
             provider={customProvider}
             granted={customGranted}
             onEnableScope={() => {
-              void api('/api/v1/scopes').then((body: { scopes: ScopeCard[] }) => {
+              void api<{ scopes: ScopeCard[] }>('/api/v1/scopes').then((body) => {
                 const scope = body.scopes.find((item) => item.key === 'llm:custom:route');
                 if (!scope) return;
                 void api('/api/v1/consent', {
@@ -847,6 +870,9 @@ export function App() {
           open={panelOpen}
           onToggle={() => setPanelOpen((value) => !value)}
           onDownload={(id, filename) => void downloadArtifact(id, filename)}
+          onPreview={(id) => void loadPreview(id)}
+          previews={artifactPreviews}
+          openArtifact={openArtifact}
         />
       }
     />

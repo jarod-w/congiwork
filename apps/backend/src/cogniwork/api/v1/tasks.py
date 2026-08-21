@@ -34,9 +34,11 @@ def list_tasks(
     request: Request,
     account: Annotated[Account, Depends(require_account)],
     conversation_id: UUID | None = Query(default=None),
+    # WS-1：历史任务搜索。匹配标题与原始请求正文，见 runtime.store.matches_query。
+    q: str | None = Query(default=None, max_length=200),
 ) -> dict[str, object]:
     engine = _engine(request)
-    tasks = engine.list_tasks(account.id, conversation_id)
+    tasks = engine.list_tasks(account.id, conversation_id, q)
     return {
         "tasks": [
             task_out(task, engine.store.list_artifacts(account.id, task.id)) for task in tasks

@@ -89,8 +89,15 @@ def delete_connection(
     connection_id: UUID,
     account: Annotated[Account, Depends(require_account)],
 ) -> dict[str, Any]:
-    _tools(request).disconnect(account.id, connection_id)
-    return {"deleted": True, "id": str(connection_id)}
+    outcome = _tools(request).disconnect(account.id, connection_id)
+    # 上游撤销的结果要如实回给前端：Notion 没有 revoke 端点，
+    # 那种情况下「断开」只意味着本地不再持有凭据（P0-05 §5）。
+    return {
+        "deleted": True,
+        "id": str(connection_id),
+        "upstream_revoked": outcome["upstream_revoked"],
+        "detail": outcome["detail"],
+    }
 
 
 @router.get("/connections/{connection_id}/activity")

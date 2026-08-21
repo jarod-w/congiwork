@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -32,6 +34,7 @@ from .runtime.digest import InMemoryAuditLog, PostgresAuditLog
 from .runtime.engine import TaskEngine
 from .runtime.events import InMemoryEventBroker, RedisEventBroker
 from .runtime.llm.router import ModelRouter, RoutingRequest
+from .runtime.state import InMemoryRuntimeStateStore, PostgresRuntimeStateStore
 from .runtime.store import InMemoryTaskStore, PostgresTaskStore
 from .runtime.tools.registry import build_runtime_registry
 from .skill.service import SkillService
@@ -162,11 +165,16 @@ def _wire_runtime(app: FastAPI) -> None:
         app.state.task_store = InMemoryTaskStore()
         app.state.audit_log = InMemoryAuditLog()
         app.state.event_broker = memory_events
+        app.state.runtime_state_store = InMemoryRuntimeStateStore()
+        app.state.checkpointer = None
     else:
         app.state.task_store = PostgresTaskStore(app.state.db_pool)
         app.state.audit_log = PostgresAuditLog(app.state.db_pool)
         redis = app.state.redis
         app.state.event_broker = RedisEventBroker(redis, memory_events) if redis else memory_events
+        app.state.runtime_state_store = PostgresRuntimeStateStore(app.state.db_pool)
+        app.state.checkpointer = _open_checkpointer(app.state.db_pool)
+        _ensure_audit_partitions(app.state.db_pool)
     app.state.tools.audit = app.state.audit_log
     router = ModelRouter(settings)
     router.custom_lookup = lambda user_id, request: _custom_client(app, user_id, request)
@@ -181,9 +189,50 @@ def _wire_runtime(app: FastAPI) -> None:
         profile=app.state.profile,
         tools=build_runtime_registry(app.state.mcp_executor),
         router=router,
+        state_store=app.state.runtime_state_store,
+        checkpointer=app.state.checkpointer,
     )
     engine.skills = app.state.skills
     app.state.task_engine = engine
+    # 上一次进程被打断的任务接回去（P0-03 RT-5）。checkpointer 在库里，
+    # 所以已完成的节点不重做。
+    if app.state.checkpointer is not None:
+        try:
+            engine.recover_interrupted()
+        except Exception:
+            logging.getLogger("cogniwork.runtime").exception("task recovery failed")
+
+
+def _ensure_audit_partitions(pool: Any) -> None:
+    """未来几个月的审计分区在启动时建出来（P0-07 §7）。
+
+    只建不删：回收是 `python -m cogniwork.maintenance audit-retention` 的事，
+    删数据不该是一次部署的副作用。建分区失败不阻塞启动 —— DEFAULT 分区还在，
+    审计不会丢，只是那部分回收要靠运维任务补。
+    """
+    from .maintenance import ensure_partitions
+
+    try:
+        with pool.connection() as conn:
+            created = ensure_partitions(conn)
+        if created:
+            logging.getLogger("cogniwork").info("created audit partitions: %s", created)
+    except Exception:
+        logging.getLogger("cogniwork").exception("could not ensure audit partitions")
+
+
+def _open_checkpointer(pool: Any) -> Any:
+    """LangGraph 的 PostgreSQL checkpointer（RT-5）。
+
+    它自带一套迁移（`checkpoint_migrations` 表），不走 cogniwork.migrate ——
+    表结构属于 langgraph，跟着它的版本走，抄进我们的迁移目录只会在升级时打架。
+    `setup()` 幂等。
+    """
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    saver = PostgresSaver(pool)
+    saver.setup()
+    return saver
 
 
 def _wire_skills(app: FastAPI) -> None:

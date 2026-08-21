@@ -183,6 +183,45 @@ button, input, textarea { font: inherit; }
   width: 100%;
 }
 .cw-memory-head textarea { min-height: 4rem; }
+
+/* 历史任务搜索（WS-1） */
+.cw-search { margin: 0.8rem 0 0.4rem; }
+.cw-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  padding: 0.55rem 0.75rem;
+  background: #fff;
+}
+
+/* 产物预览（WS-5）。宽表在自己的容器里横向滚，不带着整个面板一起抖。 */
+.cw-artifacts li { flex-direction: column; align-items: stretch; }
+.cw-artifact-row { display: flex; justify-content: space-between; gap: 0.75rem; align-items: center; }
+.cw-artifact-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
+.cw-preview {
+  margin-top: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: #fff;
+  padding: 0.6rem;
+}
+.cw-preview-scroll { overflow-x: auto; }
+.cw-preview-table { border-collapse: collapse; font-size: 0.85rem; }
+.cw-preview-table th, .cw-preview-table td {
+  border: 1px solid var(--line);
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  white-space: nowrap;
+}
+.cw-preview-table th { background: var(--sidebar); }
+.cw-preview-text { white-space: pre-wrap; margin: 0; font-size: 0.85rem; max-height: 22rem; overflow-y: auto; }
+.cw-preview img { max-width: 100%; height: auto; display: block; }
+
+/* P0-07 §10 的三条边界，隐私中心顶部 */
+.cw-boundaries { list-style: none; padding: 0; margin: 0 0 1.2rem; display: flex; flex-direction: column; gap: 0.5rem; }
+
+/* 单列布局的断点。A8 落实要求 ③：英文文案约长 30%，三栏在窄屏挤不下。 */
+@media (max-width: 60rem) {
   .cw-shell { grid-template-columns: 1fr; }
   .cw-sidebar, .cw-panel { border: 0; }
   .cw-composer { grid-template-columns: 1fr; }

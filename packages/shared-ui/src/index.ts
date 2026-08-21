@@ -18,6 +18,7 @@ export { CustomProviderSettings } from './CustomProviderSettings';
 export type {
   ApprovalCardData,
   ArtifactItem,
+  ArtifactPreview,
   ContextBundle,
   Copy,
   MemoryItem,

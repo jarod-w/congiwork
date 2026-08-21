@@ -40,10 +40,18 @@ class GraphState(TypedDict):
 
 
 def compile_graph(runtime: Any) -> Any:
+    """编图。checkpointer 由调用方注入 —— 生产是 PostgresSaver（RT-5）。
+
+    `MemorySaver` 只是没有基础设施时的回落（单测、`store_backend=memory`）。
+    落 PostgreSQL 是验收项，不是可选优化：不落库时 kill -9 之后没有可恢复的
+    checkpoint，`P0-03` §12 验收 1 不成立。
+    """
     graph = StateGraph(GraphState)
-    graph.add_node("prepare", lambda state: _prepare(runtime, state))
-    graph.add_node("act", lambda state: _act(runtime, state))
-    graph.add_node("observe", lambda state: _observe(runtime, state))
+    # 每个节点结束都把运行态刷回存储。消息是原地 append 的，
+    # 视图接不到那次写（见 runtime/state.py 的 flush 注释）。
+    graph.add_node("prepare", lambda state: _flushed(runtime, _prepare(runtime, state)))
+    graph.add_node("act", lambda state: _flushed(runtime, _act(runtime, state)))
+    graph.add_node("observe", lambda state: _flushed(runtime, _observe(runtime, state)))
     graph.add_node("finalize", lambda state: _finalize(runtime, state))
     graph.add_edge(START, "prepare")
     graph.add_edge("prepare", "act")
@@ -58,7 +66,18 @@ def compile_graph(runtime: Any) -> Any:
         {"act": "act", "finalize": "finalize"},
     )
     graph.add_edge("finalize", END)
-    return graph.compile(checkpointer=MemorySaver())
+    return graph.compile(checkpointer=getattr(runtime, "checkpointer", None) or MemorySaver())
+
+
+def _persist(runtime: Any, task_id: Any) -> None:
+    state = getattr(runtime, "state", None)
+    if state is not None:
+        state.flush(str(task_id))
+
+
+def _flushed(runtime: Any, state: GraphState) -> GraphState:
+    _persist(runtime, state["task_id"])
+    return state
 
 
 def _after_act(state: GraphState) -> Literal["observe", "finalize", "pause"]:
@@ -159,7 +178,10 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
         return {**state, "iteration": iteration, "failed": True}
 
     specs = _available_specs(runtime)
-    cost_tier = "economy" if _daily_capped(runtime, task) else "standard"
+    capped = _daily_capped(runtime, task)
+    cost_tier = "economy" if capped else "standard"
+    if capped:
+        _notify_downgrade_once(runtime, task)
     client = runtime.router.client_for(
         RoutingRequest(
             task_intent=task.intent,
@@ -192,11 +214,14 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
         runtime.events.publish(str(task.id), "message.delta", text=chunk)
 
     try:
-        result = client.complete(
-            runtime.messages[str(task.id)],
-            [_tool_schema(spec) for spec in specs],
-            on_delta=on_delta,
-        )
+        # 全局在飞上限（§8 末行）。per-(user, provider) 桶管不到跨用户的总量，
+        # 而供应商的账号级限流是全局的。
+        with runtime.llm_concurrency:
+            result = client.complete(
+                runtime.messages[str(task.id)],
+                [_tool_schema(spec) for spec in specs],
+                on_delta=on_delta,
+            )
     except Exception as exc:
         _finish_step(
             runtime, step, StepStatus.FAILED, None, {"message": type(exc).__name__}, started
@@ -214,7 +239,11 @@ def _act(runtime: Any, state: GraphState) -> GraphState:
     task.token_out += result.token_out
     from cogniwork.runtime.governance import cost_for_tokens, record_usage, should_pause_for_cost
 
-    added = cost_for_tokens(result.token_in, result.token_out)
+    # 费率按 (vendor, model) 取 —— 单一费率会让「哪个模型贵」这件事从
+    # daily_llm_usage 里消失，而那份数据是给定价校准用的（§8）。
+    added = cost_for_tokens(
+        result.token_in, result.token_out, vendor=result.vendor, model=result.model
+    )
     task.cost_usd = float(task.cost_usd or 0) + added
     skills = getattr(runtime, "skills", None)
     if skills is not None:
@@ -367,6 +396,9 @@ def _finalize(runtime: Any, state: GraphState) -> GraphState:
     )
     runtime.events.close(str(task.id))
     _record_skill_run(runtime, task, terminal)
+    state_registry = getattr(runtime, "state", None)
+    if state_registry is not None:
+        state_registry.finish(str(task.id))
     return state
 
 
@@ -619,6 +651,23 @@ def _timed_out(task: Any) -> bool:
     if started is None:
         return False
     return (now() - started).total_seconds() > 30 * 60
+
+
+def _notify_downgrade_once(runtime: Any, task: Any) -> None:
+    """降级到 economy 要告诉用户（§8）。一个任务只说一次，不刷屏。"""
+    from cogniwork.runtime.governance import DOWNGRADE_NOTICE
+
+    registry = getattr(runtime, "state", None)
+    if registry is None:
+        return
+    entry = registry.entry(str(task.id))
+    if entry.economy_notice_sent:
+        return
+    entry.economy_notice_sent = True
+    registry.flush(str(task.id))
+    # 只走事件流，不进 messages —— 进了 messages 就可能被 _last_assistant_text
+    # 当成任务结论写进 result.summary。
+    runtime.events.publish(str(task.id), "message.delta", text=DOWNGRADE_NOTICE)
 
 
 def _daily_capped(runtime: Any, task: Any) -> bool:

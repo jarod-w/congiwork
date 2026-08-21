@@ -17,3 +17,24 @@ configured, run the same cases against a seeded fixture dump before shipping.
 | g3 | Who is the main competitor? | WorkBuddy |
 | g4 | Which channels did we push in Q3? | LinkedIn |
 | g5 | What happened last time we wrote the quarterly report? | split by channel |
+
+## Chinese queries: no lexical signal, by decision
+
+`_lexical_tokens` splits on whitespace, so a Chinese sentence is one token.
+`_lexical_overlap("席位价格", "标准席位价格是…")` is **0** — a query that is a
+literal substring of the stored memory scores nothing. For Chinese, the
+`0.25 * lexical` term of the hybrid score is dead weight and recall rests
+entirely on the vector half.
+
+Phase 1 does not add a tokenizer. The market is English-speaking (A2), so this
+does not affect the exit criteria, and `pg_jieba` is a PostgreSQL extension the
+official `postgres:16` image does not ship — pulling it in would tie CI and the
+production image to a custom build, the same reason deviation 10 keeps pgvector
+out of Phase 1.
+
+If a Chinese market opens in Phase 2, evaluate **CJK character bigrams** first:
+no dictionary, no extension, and it drops straight into `_lexical_tokens`. Full
+segmentation is the step after that, not the first one.
+
+`test_chinese_queries_get_no_lexical_signal_without_a_tokenizer` pins the
+measurement. Check whether it still reads 0 before reopening the decision.

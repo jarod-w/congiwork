@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from cogniwork.core.config import Settings
 from cogniwork.runtime.tools.spec import ToolResult, ToolSpec
 from cogniwork.tools.catalog import ToolCatalog, load_catalog
 from cogniwork.tools.http import HttpTransport
-from cogniwork.tools.mcp import InProcessMcpClient
+from cogniwork.tools.mcp import build_mcp_client
 from cogniwork.tools.service import ToolService
 
 
@@ -19,10 +20,18 @@ class McpExecutor:
         *,
         catalog: ToolCatalog | None = None,
         transport: HttpTransport | None = None,
+        settings: Settings | None = None,
+        client: Any | None = None,
     ) -> None:
         self._tools = tools
         self._catalog = catalog or load_catalog()
-        self._client = InProcessMcpClient(self._catalog, transport or tools.transport)
+        # 传输形态从配置来（P0-05 §3）。写死 in-process 等于把「连接器崩溃
+        # 只影响该用户该连接」这条隔离要求从实际路径上拿掉。
+        self._client = client or build_mcp_client(
+            settings or tools.settings,
+            catalog=self._catalog,
+            transport=transport or tools.transport,
+        )
 
     def invoke(
         self, spec: ToolSpec, arguments: dict[str, Any], context: dict[str, Any]

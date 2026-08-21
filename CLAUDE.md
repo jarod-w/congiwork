@@ -21,7 +21,8 @@ apps/backend/             ✅ FastAPI 单体
   src/cogniwork/consent/    Scope 注册表 + ConsentService + Postgres/Redis store
   src/cogniwork/auth/       注册/登录、Bearer JWT
   src/cogniwork/runtime/    TaskEngine、LangGraph、builtin 工具、SSE、LLM 路由、
-                            治理、审批、审计摘要、Skill 驱动
+                            治理、审批、审计摘要、Skill 驱动、运行态落库（state.py）、
+                            产物预览（preview.py）
   src/cogniwork/memory/     Memory OS：混合检索、抽取确认、文件摄取、按 Scope 物理删除
   src/cogniwork/profile/    个人画像 + 访谈状态机 + 注入缓存 + 归档
   src/cogniwork/tools/      MCP Client、Vault、OAuth、连接器适配器、韧性
@@ -30,9 +31,13 @@ apps/backend/             ✅ FastAPI 单体
   src/cogniwork/api/v1/     REST：auth / scopes / consent / tasks / files / memories /
                             privacy / profile / tools / skills / templates / llm / events
   src/cogniwork/migrate.py  SQL 迁移工具
-  migrations/               0001–0007（consent / account / task / memory / profile / tools / skill）
+  src/cogniwork/maintenance.py  运维任务：审计分区创建与 12 个月回收
+  migrations/               0001–0008（consent / account / task / memory / profile /
+                            tools / skill / runtime_state）。审计分区不在迁移里建，
+                            见 maintenance.py
   tests/guards/           ✅ 硬约束的可执行形式，见下
   tests/e2e/              ✅ 零授权核心路径（P0-07 §8.3）
+  tests/contracts/        ✅ 四个连接器的上游请求/响应契约清单（P0-05 M6）
 packages/shared-types/    ✅ 错误码、SSE 事件、审批动作
 packages/shared-ui/       ✅ 工作台展示组件（无网络/路由）：三栏壳、审批卡、授权卡、
                             Memory Browser、画像、连接管理、Skill 编辑器、隐私中心
@@ -69,6 +74,7 @@ docker compose up -d
 #   COGNIWORK_STORE_BACKEND=postgres
 #   COGNIWORK_DATABASE_URL / COGNIWORK_REDIS_URL / COGNIWORK_JWT_SECRET
 .venv/bin/python -m cogniwork.migrate
+.venv/bin/python -m cogniwork.maintenance audit-retention   # 审计分区，cron 里也要有
 .venv/bin/python -m uvicorn cogniwork.main:app --reload
 ```
 
@@ -86,6 +92,10 @@ docker compose up -d
 | `test_cross_language_contracts.py` | 后端与 `shared-types` 的错误码/风险词表一致、前端不得复制 Scope 列表 |
 | `test_no_credential_leak.py` | 凭据不进日志/trace/错误上报（硬约束 9） |
 | `test_oauth_scope_minimization.py` | OAuth 请求范围不得超出已开启 Scope 对应的最小集合 |
+
+`test_no_bypass.py` 里还有一条 `test_no_local_timezone_today`：`date.today()` / `datetime.now()`
+都走本地时区，日额度会在服务器本地午夜翻页，与按 UTC 记账的 `daily_llm_usage` 对不上。
+日期用 `core.clock.today()`。
 
 **这些挂了不是「测试写得不好」，是违反了硬约束。改测试之前先改硬约束，反过来不行。**
 
@@ -119,13 +129,46 @@ docker compose up -d
 | `config/tool_catalog.yaml` | MCP 工具名 → `scope_key` / `risk` / schema。**不要在这里复制 display_name** |
 | `runtime/tools/builtin.py` | L1 工具，不进 catalog |
 
-加一个连接器工具：先有 Scope（或确认已有），再在 catalog 登记，实现放 `tools/providers.py`。未上线的 **tool 域**连接器不得进注册表（Slack 已移出）。`desktop:*` / `browser:*` 已在 yaml 里为 P0-08 占位，桌面壳未落地前不要在 Web 上做成「点得开但调不通」的授权项。
+加一个连接器工具：先有 Scope（或确认已有），再在 catalog 登记，实现放 `tools/providers.py`，
+**并在 `tests/contracts/upstream_contracts.json` 录一份契约** —— 有一条测试断言 catalog 里
+每个工具都有契约条目且真的有实现。未上线的 **tool 域**连接器不得进注册表（Slack 已移出）。`desktop:*` / `browser:*` 已在 yaml 里为 P0-08 占位，桌面壳未落地前不要在 Web 上做成「点得开但调不通」的授权项。
+
+### 运行态与恢复（RT-5）
+
+`waiting_approval` 可以等 24 小时（`approvals.APPROVAL_TTL`），期间重启后端不能丢上下文。
+
+- **图状态**：`store_backend=postgres` 时 checkpointer 是 `langgraph.checkpoint.postgres.PostgresSaver`。
+  它自带一套表（`checkpoints*`），由 `setup()` 在启动时建，**不进 `apps/backend/migrations`** ——
+  那套结构属于 langgraph，抄过来只会在升级时打架。
+- **运行态**：消息历史 / `used_memories` / `blocked_scopes` / `pending_calls` / `skill_cursors`
+  落 `task_runtime_state`（`runtime/state.py`）。`TaskEngine` 上那五个属性仍是 dict 形状，
+  但已经是**写穿存储的视图** —— 不要改回普通 dict。
+- 列表是原地 `append` 的，视图接不到那次写，所以图的每个节点结束都 flush 一次
+  （`graph._flushed`）。手工驱动节点的路径（`_continue_after_approval`）要自己 flush。
+- `task.thread_id` **跟着 task 走**，不是每次 invoke 换新的 —— 换新的等于没有 checkpoint。
+  显式 `resume()` 一个终态任务才换（图已在 END 上）。
+- 任务进终态时 `state.finish()` 扔掉消息历史、留下「凭什么」面板要用的 `used_memories`。
+- 启动时 `recover_interrupted()` 接回停在 `running` / `planning` 的任务。**假设单进程部署**。
 
 ### 存储与检索
 
 - `COGNIWORK_STORE_BACKEND`：`memory`（单测 / 无基础设施本地）或 `postgres`（CI 与生产）。Redis 是授权缓存 + SSE 补发，不是主存储。
+- **审计分区**：`execution_audit` 按月分区，保留 12 个月。执行者是 `cogniwork.maintenance`
+  （`audit-retention`），不是手搓 SQL。`DEFAULT` 分区留着当安全网，代价是它里面的过期行
+  只能 `DELETE`，不能 drop。
 - Memory embedding 列是 `real[]`，余弦在应用层（`memory/embed.py`，维度 1024）。**不要引入独立向量库，也不要在 Phase 1 把 CI 绑到 pgvector** —— 官方 `postgres:16` 没有 `vector` 扩展。生产可后续迁 `vector(1024)` + HNSW，接口不用动。
 - 配置文件用 `core.paths.find_config_file`，不要写死「往上走 N 层」。部署覆盖见 `docs/deploy.md`。
+
+### 连接器传输（P0-05 §3）
+
+`COGNIWORK_MCP_TRANSPORT` 默认 `stdio`：连接器跑在独立进程里，崩溃不带上 API，token 走
+子进程环境所以不跨用户共享。`inprocess` 只给单测 —— 子进程拿不到测试注入的 `StubTransport`，
+断言不到「发出了哪些请求」（`tests/conftest.py` 因此 setdefault 成 `inprocess`）。
+填其它值**启动即报错**：静默回落等于悄悄把隔离要求取消掉，而外部看不出区别。
+streamable-http 未实现，登记在偏离 11。
+
+断开连接：先调第三方 revoke，再删本地凭据 —— 顺序反了就没 token 可撤了。Notion 没有
+撤销端点，API 如实返回 `upstream_revoked: false`，不假装撤掉了。
 
 ### Skill / LLM
 
@@ -139,6 +182,9 @@ docker compose up -d
 - 展示组件只放 `packages/shared-ui`；`fetch` / 路由 / `sessionStorage` 在 `apps/web`。
 - Scope 列表只从 `GET /api/v1/scopes` 拉，TS 里不得复制。
 - 文案长度按英文 +30% 排布局（A8）。
+- **搜索与预览都在服务端**：任务搜索走 `?q=`（本地只有已加载的那一页，前端过滤会漏历史）；
+  产物预览走 `/artifacts/{id}/preview`（`<img src>` 带不了 Bearer header，截断也该在送出之前做）。
+- 提交前跑 `pnpm --filter @cogniwork/web build`（含 `tsc --noEmit`）。
 
 ## 文档地图
 
@@ -150,14 +196,16 @@ docker compose up -d
 | `docs/design/00-conventions.md` | 跨模块公共约定 | **写任何代码前必读** |
 | `docs/design/P0-*.md` | Phase 1 必交模块设计 | 实现对应模块时 |
 | `docs/design/P1-*.md` | Phase 2 模块设计与研究计划 | 同上 |
-| `docs/design/P0-open-questions.md` | **决策留痕**（A1–A10 / B1–B11）+ 执行清单 | 想知道「为什么是这样定的」时；**已全部确认，无待决问题** |
-| `docs/eval/memory-retrieval.md` | 记忆检索 golden query；改检索权重时重跑 `tests/test_memory_eval.py` | 动 Memory 检索时 |
+| `docs/design/P0-open-questions.md` | **决策留痕**（A1–A10 / B1–B11）+ 执行清单 | 想知道「为什么是这样定的」时；**已全部确认，无待决问题**（模块级的 `P0-02` §12 待决 1 也已结清）|
+| `docs/eval/memory-retrieval.md` | 记忆检索 golden query + 中文分词决策的测量 | 动 Memory 检索时 |
 | `TODO.md` | **开发待办与顺序**，每条标明出处文档与章节 | 决定下一步做什么时 |
 | `config/README.md` | 怎么加一个 Scope、不要做什么 | 动 `scopes.yaml` 前 |
 
 冲突时的优先级：`00-conventions.md` > `ai_platform_plan.md` > 各模块设计文档。约定要变更时，先改 `00-conventions.md` 再改模块文档。
 
-`docs/design/README.md` 文首仍写着 A9「部分确认」——那是该索引自己没跟上。以 `P0-open-questions.md` 与 `TODO.md` 为准：A/B 组已全部确认。
+偏离清单在 `docs/design/README.md`。**偏离设计文档时必须登记**，13 条都在那张表里 ——
+最近三条是 streamable-http 未实现（11）、`packages/mcp-connectors` 位置（12）、
+中文分词 Phase 1 不投入（13）。
 
 ## 硬约束（不要绕过）
 
@@ -209,6 +257,7 @@ docker compose up -d
 | 生成主键 | `core.ids.new_id()`（UUIDv7）。**不要直接 `uuid4()`**，有守护拦 |
 | 生成 trace_id | `core.ids.new_trace_id()` |
 | 取当前时间 | `core.clock.now()`（UTC + tzinfo）。**不要 `utcnow()`**，有守护拦 |
+| 取当前日期 | `core.clock.today()`（UTC）。**不要 `date.today()` / `datetime.now()`**，有守护拦 |
 | 抛对外错误 | `core.errors` 里的 `AppError` 子类，错误码取自 `ErrorCode` 受控词表 |
 | 读语言 / 配置 | `core.config.get_settings()`。**不要硬编码 `"en-US"`**，有守护拦（A8 落实要求 ①）|
 | 找 yaml / 迁移路径 | `core.paths.find_config_file` / `COGNIWORK_*_PATH` |
@@ -218,6 +267,9 @@ docker compose up -d
 | 加 L1 工具 | `runtime/tools/builtin.py`，`scope_key=None` |
 | 记审计 | `runtime.digest`（脱敏摘要）。不要把参数原文写进 `execution_audit` |
 | 跑迁移 | `python -m cogniwork.migrate`；新表用 `text` + `CHECK`，不用 PG enum |
+| 跑运维任务 | `python -m cogniwork.maintenance audit-retention`（审计分区与 12 个月回收）|
+| 存任务运行态 | `TaskEngine.state`（`runtime/state.py`）。**不要在 engine 上加新的进程内 dict** |
+| 算成本 | `runtime.governance.cost_for_tokens(..., vendor=, model=)`。费率按模型分档，不要传单一费率 |
 
 数据与接口：
 

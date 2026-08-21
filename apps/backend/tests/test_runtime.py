@@ -108,3 +108,47 @@ def test_model_router_falls_back_to_stub_without_keys():
     assert isinstance(client, StubLLM)
     chosen = router.choose(RoutingRequest(None, 0, False, True, "interactive", "standard"))
     assert chosen.vendor == "stub"
+
+
+def test_daily_downgrade_tells_the_user_once(client, registered):
+    """P0-03 §8：日额度打满转 economy 路由「并提示用户」。
+
+    不提示的话用户只会觉得「今天它变笨了」—— 那正是降级而非硬停想避免的体验。
+    """
+    from uuid import UUID
+
+    from cogniwork.core.clock import today
+    from cogniwork.main import app
+    from cogniwork.runtime.governance import DOWNGRADE_NOTICE
+
+    engine = app.state.task_engine
+    # 把今天的用量顶到日额度以上
+    engine.skills.store.add_usage(
+        UUID(registered["id"]),
+        today().isoformat(),
+        engine.settings.daily_cost_usd_limit + 1,
+        1000,
+        1000,
+    )
+    created = client.post(
+        f"{_prefix()}/tasks",
+        headers={"Authorization": f"Bearer {registered['token']}"},
+        json={"message": "Draft a short note"},
+    )
+    assert created.status_code == 200
+    task_id = created.json()["id"]
+    for _ in range(200):
+        task = client.get(
+            f"{_prefix()}/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {registered['token']}"},
+        ).json()
+        if task["status"] in {"succeeded", "failed", "cancelled", "timed_out"}:
+            break
+        time.sleep(0.02)
+
+    notices = [
+        event
+        for event in app.state.event_broker._events.get(task_id, [])
+        if event["event"] == "message.delta" and event.get("text") == DOWNGRADE_NOTICE
+    ]
+    assert len(notices) == 1, "降级提示要发且只发一次"

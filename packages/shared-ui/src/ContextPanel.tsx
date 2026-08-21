@@ -1,4 +1,4 @@
-import type { ContextBundle, Copy } from './types';
+import type { ArtifactPreview, ContextBundle, Copy } from './types';
 import { ArtifactPanel } from './ArtifactPanel';
 
 interface Props {
@@ -7,9 +7,21 @@ interface Props {
   open: boolean;
   onToggle: () => void;
   onDownload: (id: string, filename: string) => void;
+  onPreview?: (id: string) => void;
+  previews?: Record<string, ArtifactPreview | undefined>;
+  openArtifact?: string | null;
 }
 
-export function ContextPanel({ copy, bundle, open, onToggle, onDownload }: Props) {
+export function ContextPanel({
+  copy,
+  bundle,
+  open,
+  onToggle,
+  onDownload,
+  onPreview,
+  previews,
+  openArtifact,
+}: Props) {
   return (
     <div className="cw-context">
       <header>
@@ -84,7 +96,14 @@ export function ContextPanel({ copy, bundle, open, onToggle, onDownload }: Props
               <p className="cw-muted">{copy.noneYet}</p>
             )}
           </section>
-          <ArtifactPanel copy={copy} artifacts={bundle?.artifacts ?? []} onDownload={onDownload} />
+          <ArtifactPanel
+            copy={copy}
+            artifacts={bundle?.artifacts ?? []}
+            onDownload={onDownload}
+            onPreview={onPreview}
+            previews={previews}
+            openId={openArtifact}
+          />
         </>
       ) : null}
     </div>

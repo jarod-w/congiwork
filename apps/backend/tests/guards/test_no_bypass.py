@@ -139,6 +139,31 @@ def test_no_naive_utcnow():
     )
 
 
+def test_no_local_timezone_today():
+    """`date.today()` / `datetime.now()` 不带时区 → 走本地时区。
+
+    这条补的是上一条漏掉的口子：`utcnow()` 被拦住了，`date.today()` 没有，
+    于是日额度在服务器本地午夜翻页，与按 UTC 记的 `daily_llm_usage` 对不上账
+    （P0-03 §8）。日期用 core.clock.today()。
+    """
+    allowed = {"core/clock.py"}
+    offenders: list[str] = []
+    for path in _python_files():
+        rel = _rel(path)
+        if rel in allowed:
+            continue
+        source = path.read_text(encoding="utf-8")
+        for literal in ("date.today()", "datetime.now()"):
+            if literal in source:
+                offenders.append(f"{rel}: {literal}")
+
+    assert not offenders, (
+        "以下位置用了本地时区的当前时间:\n  "
+        + "\n  ".join(offenders)
+        + "\n\n日期用 core.clock.today()，时间用 core.clock.now()。"
+    )
+
+
 def test_executors_make_no_upstream_call_when_denied():
     """动态版本的无旁路检查（P0-07 §8.2）。
 

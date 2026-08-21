@@ -8,7 +8,7 @@
 |---|---|
 | 周期 | **3.5 个月**（约 76 工作日/人 × 5 人），A9 定案 |
 | 需求量 | 约 **319 人日**（302 + 2026-08-21 核对补入 17），有效容量 304（20% 损耗）/ 285（25%） |
-| 余量 | **已转负，约 −15 人日** —— 2026-08-21 核对补入约 17 人日，见 §补齐项 |
+| 余量 | **约 −15 人日**。2026-08-22 已交付补齐项中的约 14 人日，但**余量不因此变好** —— 那 14 人日是花掉的，不是省下的。剩余待办见 §补齐项 |
 | 更新方式 | 完成一项勾掉；范围有变先改出处文档，再改这里 |
 
 **图例**：`⛔` 阻塞其他工作 · `🔒` 被外部因素卡住 · `⚡` 关键路径 · `🧪` 守护/验收测试
@@ -58,18 +58,22 @@
 
 **目标路径已跑通**（2026-08-18）：「注册 → 跳过访谈 → 上传 xlsx → 整理成周报 → 下载」，由 `tests/e2e/test_zero_auth_path.py` 守护。
 
-⚠️ **2026-08-21 逐文档核对后重新打开三项** —— 主体已交付，但出处文档的验收口径没达到。汇总见 §补齐项。
+2026-08-21 核对重新打开的三项已于 **2026-08-22 补齐**。
 
 ### 后端 · Agent Runtime
 
 - [x] ⚡ **Task 模型 + 状态机 + TaskEngine 门面** — `P0-03` §11 M1 — 4d
-- [ ] ⚡ **LangGraph 图 + checkpointer + 基础 act 循环** — `P0-03` §11 M2 — 已花 5d，补齐约 3d
+- [x] ⚡ **LangGraph 图 + checkpointer + 基础 act 循环** — `P0-03` §11 M2 — 5d + 补齐 3d（2026-08-22）
       - 已交付：plan → act → observe → finish 图、act 循环、与状态机对接
-      - ⚠️ **未达 RT-5**：`graph.py:61` 用的是 `MemorySaver` 而非 PostgreSQL checkpointer；
-        `engine.py:55-58` 的 `messages` / `used_memories` / `blocked_scopes` / `pending_calls` 全是进程内 dict
-      - 后果：`waiting_approval` 的任务一重启后端就丢上下文，**`P0-03` §12 验收 1 不成立**
-      - 阶段 5 的审批联调已经建在这上面了，**每多接一个写工具，这条的返工面就更大**
-      - 🧪 验收：kill -9 后可从最后一个 checkpoint 恢复；`waiting_approval` 重启后可继续
+      - **RT-5 已达**：`store_backend=postgres` 时 checkpointer 是 `PostgresSaver`（表由它自己的
+        migration 建，不进 `cogniwork.migrate`）；`messages` / `used_memories` / `blocked_scopes` /
+        `pending_calls` / `skill_cursors` 落 `task_runtime_state`（`runtime/state.py` + `0008`）
+      - `thread_id` 跟着 task 走（原先每次 invoke 换新 id，等于没有 checkpoint）；
+        显式 resume 换新 thread_id，否则图已在 END 上
+      - 启动时 `recover_interrupted()` 把停在 `running` / `planning` 的任务接回去；
+        `waiting_approval` 不自动推进（它在等人）
+      - 🧪 `tests/test_runtime_recovery.py`：第二个 engine 代表重启后的进程，
+        不共用任何进程内状态，必须仍能认出任务挂在哪个工具调用上并执行原参数
 - [x] ⚡ **工具抽象层 + builtin 工具 + 权限钩子** — `P0-03` §11 M3 — 4d
       - 🧪 **权限钩子接好后，启用 `tests/guards/test_no_bypass.py` 里那条 skip 的动态测试**
         （mock `ConsentService` 返 DENY，断言无上游调用发生 — `P0-07` §8.2）
@@ -80,14 +84,20 @@
 
 ### 前端 · 任务工作台
 
-- [ ] ⚡ **布局骨架 + 会话/任务列表 + 输入框** — `P0-04` §10 M1 — 已花 4d，补齐约 1d
+- [x] ⚡ **布局骨架 + 会话/任务列表 + 输入框** — `P0-04` §10 M1 — 4d + 补齐 1d（2026-08-22）
       - 三栏布局，右栏「凭什么」面板默认展开 — `P0-04` §3
       - ⚠️ **布局需容纳英文文案约 30% 的长度增长**（A8 落实要求 ③ / `P0-04` §5）
-      - ⚠️ **未达 WS-1**：`TaskList` 只按运行态分组，**没有历史任务搜索** — `P0-04` §2
+      - **WS-1 已达**：`GET /api/v1/tasks?q=` 匹配标题 + 原始请求正文，`TaskList` 带搜索框（250ms 去抖）。
+        过滤在服务端 —— 本地只有已加载的那一页，在前端过滤会漏掉真正的历史
+      - 顺手修了 `styles.css` 里一个坏掉的 `@media`（少了开头那行，整段响应式规则是死的），
+        单列断点因此从来没生效过 —— 与 A8 落实要求 ③ 直接相关
 - [x] ⚡ **SSE 接入 + 流式消息渲染 + 性能优化** — `P0-04` §10 M2 — 5d
-- [ ] ⚡ **文件上传 + 产物面板** — `P0-04` §10 M5 — 已花 4d，补齐约 1d
+- [x] ⚡ **文件上传 + 产物面板** — `P0-04` §10 M5 — 4d + 补齐 1d（2026-08-22）
       - ⚠️ **上传不加 Scope**。Web 上传是每次显式选择，属 L1 — `00-conventions.md` §3 注、`config/scopes.yaml` 末尾说明
-      - ⚠️ **未达 WS-5**：`ArtifactPanel` 只有文件名 + 下载按钮，**没有预览**。口径是 xlsx/csv/md/docx/png — `P0-04` §2
+      - **WS-5 已达**：`GET /api/v1/artifacts/{id}/preview` 返回四种 kind（table / markdown / text / image），
+        xlsx/csv/md/docx/png 全覆盖。解析在服务端（`runtime/preview.py`）：解析器已经在这边、
+        `<img src>` 带不了 Bearer header、截断要在送给浏览器之前做
+      - 预览不加 Scope —— 读的就是用户刚拿到的那份产物
 - [x] **执行时间线组件** — `P0-04` §10 M3 — 4d
 
 ### 验收
@@ -126,11 +136,14 @@
 
 ### 审计与隐私中心
 
-- [ ] **执行审计日志 + 分区 + 脱敏** — `P0-07` §14 M3 — 已花 3d，补齐约 1d
+- [x] **执行审计日志 + 分区 + 脱敏** — `P0-07` §14 M3 — 3d + 补齐 1d（2026-08-22）
       - 只记「做了什么」不记「内容是什么」；收件人存数量与哈希 — 硬约束 8
-      - ⚠️ **分区只建了 `execution_audit_default`**。DEFAULT 分区永远 drop 不掉，
-        `P0-07` §7 的「12 个月到期 drop 分区」没有执行者 —— `0001_consent.sql:80` 那句
-        「分区的创建与回收由运维任务负责」指的运维任务不存在
+      - **执行者已就位**：`cogniwork.maintenance`（`audit-retention` 子命令）建未来分区 + drop 过期分区，
+        cron 写进 `docs/deploy.md` §8.1；建分区那一半 API 启动时也跑一次（失败不阻塞启动）
+      - 分区逻辑只有一份实现（Python，有单测），**不在迁移里写第二份 plpgsql**；
+        DEFAULT 里落在区间内的行先挪走再 ATTACH，否则 PostgreSQL 拒绝创建
+      - **DEFAULT 仍然留着**（安全网），所以它里面的过期行靠 `DELETE` 回收，不是 drop ——
+        这是留 DEFAULT 的代价，不是漏掉的一步
 - [x] **隐私中心 UI** — `P0-07` §14 M4 — 5d
 - [x] **撤销/导出/删除全链路 + 备份失效验证** — `P0-07` §14 M5 — 4d
       - 账号删除 72 小时内完成含备份；`consent_record` 匿名化保留（B1）
@@ -139,7 +152,7 @@
 
 ## 阶段 4 · 画像与只读连接器（第 6–9 周）
 
-信任爬坡 L1→L2。画像六项全部达标（`P0-01` §9 验收 3/4/5 各有测试）。**工具集成层重新打开两项**，见 §补齐项。
+信任爬坡 L1→L2。画像六项全部达标（`P0-01` §9 验收 3/4/5 各有测试）。工具集成层曾重开两项，已于 2026-08-22 补齐。
 
 ### 个人画像
 
@@ -157,21 +170,24 @@
 
 ### 工具集成层
 
-- [ ] ⚡ **MCP Client 接入层 + Tool Registry + ToolSpec 映射** — `P0-05` §11 M1 — 已花 5d，补齐约 2d
+- [x] ⚡ **MCP Client 接入层 + Tool Registry + ToolSpec 映射** — `P0-05` §11 M1 — 5d + 补齐 2d（2026-08-22）
       - 已交付：JSON-RPC 子集（initialize / tools/list / tools/call）、Tool Registry、ToolSpec 映射、
         `python -m cogniwork.tools.mcp_server` 的 stdio 入口
-      - ⚠️ **`StdioMcpClient` 写了但没接线**：`tools/executor.py:25` 恒用 `InProcessMcpClient`，
-        `mcp_transport` 配置项无人读。于是 `P0-05` §3 的隔离要求
-        「连接器进程崩溃只影响该用户该连接」**在实际路径上不成立** —— 连接器崩溃会带上 API 进程
-      - streamable-http 传输缺失。Phase 1 四个连接器都是自托管，暂无消费方，
-        可按 §3.1「按需」延后，但**要在 `docs/design/README.md` 偏离表登记**，别当成已支持
-- [ ] **Credential Vault（信封加密）+ OAuth 流程** — `P0-05` §11 M2 — 已花 4d，补齐约 1d
+      - **传输已接线**：`mcp_transport` 默认 `stdio`（连接器独立进程，崩溃不带上 API，
+        token 走子进程环境所以不跨用户共享）；`inprocess` 只给单测 —— 子进程拿不到测试注入的 transport。
+        填其它值**启动即报错**，静默回落等于悄悄取消隔离要求
+      - 🧪 `tests/test_mcp_transport.py` 真起子进程走一遍，并覆盖崩溃 / 超时收成 ToolResult
+      - streamable-http 仍未实现，已登记为 `docs/design/README.md` **偏离 11** ——
+        「支持接入」这句话在文档里读起来像已经有了
+- [x] **Credential Vault（信封加密）+ OAuth 流程** — `P0-05` §11 M2 — 4d + 补齐 1d（2026-08-22）
       - 🧪 凭据在日志、错误上报、trace 中均无明文（守护 `test_no_credential_leak.py` 已就位）— 硬约束 9、`P0-05` §10.6
       - 🧪 OAuth 请求范围不超出已开启 Scope 的最小集合（守护 `test_oauth_scope_minimization.py`）— `P0-05` §10.4
-      - ⚠️ **未达 §10 验收 2**：`service.py:156` 的 `disconnect` 只删本地凭据 + 撤 consent，
-        **没有调第三方的 revoke 端点**（全仓搜不到 `oauth2/revoke`）。
-        后果是用户点了「断开」，Google / Notion / GitHub 那边的授权仍然有效到过期为止 ——
-        这跟「撤销即失效」是两回事，用户看到的和实际发生的不一致
+      - **§10 验收 2 已达**：`disconnect` 先调第三方 revoke（Google `oauth2/revoke`、
+        GitHub `DELETE /applications/{id}/grant`）再删本地凭据 —— 顺序反了就没 token 可撤了。
+        **Notion 没有 token 撤销端点**，API 如实返回 `upstream_revoked: false` +
+        `provider_has_no_revoke_endpoint`，不假装撤掉了
+      - 上游撤销失败仍删本地凭据并记 `last_error`：本地不留是我们能保证的那部分
+      - 🧪 `tests/test_disconnect_revoke.py` 含一条顺序守护
 - [x] 🔒 **Gmail + Google Calendar + Notion 连接器（只读）** — `P0-05` §11 M3 — 6d
       - ⚠️ **按「Calendar + Notion 先做、Gmail 最后做」拆序**（A10 落实要求 1）
         这样 G2 触发降级预案时，受影响的是里程碑尾部而不是整个 M3
@@ -184,7 +200,7 @@
 
 ## 阶段 5 · Skill 与写能力（第 8–12 周）
 
-信任爬坡 L3（SaaS 侧）。Skill 八项与 Custom Provider、资源治理全部达标（B8 嵌套、dry-run、SSRF、`preset_copy` 排除各有测试）。**`P0-05` M6 重新打开一项**，见 §补齐项。
+信任爬坡 L3（SaaS 侧）。Skill 八项与 Custom Provider、资源治理全部达标（B8 嵌套、dry-run、SSRF、`preset_copy` 排除各有测试）。`P0-05` M6 曾重开，已于 2026-08-22 补齐。
 
 - [x] **Skill 数据模型 + CRUD + 版本快照** — `P0-06` §10 M1 — 3d
 - [x] **自然语言 → Skill 草稿（结构化输出 + 校验）** — `P0-06` §10 M2 — 4d
@@ -200,11 +216,14 @@
       - 五个示例里四个零授权；`source='preset_copy'` **不计入退出条件** — `P0-06` §5.5
       - ⚠️ **预置示例的定义文件里不得出现具体连接器名** —— 发送工具在 Phase 1 有三种可能，写死了 CASA 一不过就得改内容重新发版
 - [x] **写/不可撤销能力 + 与审批链路联调** — `P0-05` §11 M5 — 4d
-- [ ] **韧性（重试/限流/熔断）+ 契约测试** — `P0-05` §11 M6 — 已花 3d，补齐约 1d
+- [x] **韧性（重试/限流/熔断）+ 契约测试** — `P0-05` §11 M6 — 3d + 补齐 1d（2026-08-22）
       - 韧性四件齐了：超时、read 重试 / irreversible 不重试、per-(user,provider) 令牌桶、按 provider 熔断
         （`tools/resilience.py`，`test_write_tools.py` 有对应用例）— `P0-05` §6
-      - ⚠️ **契约测试缺失**。四个 provider 的请求/响应形状目前只被单测里的 stub 覆盖，
-        上游改字段不会有任何测试变红
+      - **契约测试就位**：`tests/contracts/upstream_contracts.json` 把 23 个工具「发什么、读哪些字段」
+        写死成一份可审阅的清单，`test_provider_contracts.py` 压三条断言：请求形状逐字段比对、
+        `depends_on` 声明的字段必须承重（去掉它结果要变，防清单腐烂）、catalog 与适配器不脱节
+      - **能力边界写在测试文件的 docstring 里**：离线测试查不出上游今天改了字段 —— 没有任何离线
+        测试能。它买到的是「上游发公告时改一个文件，然后由测试告诉你哪些适配器要动」
 - [x] **Custom Provider**（SSRF 校验 + 能力探测 + `llm:custom:route`） — `P0-03` §11 M6b — 4d
       - 🧪 **SSRF 防护**：拒绝回环/私网/link-local（云元数据端点）/非 https/重定向，防 DNS rebinding — `P0-03` §7.1 ②
       - 🧪 **能力探测**：不支持 tool-use 强制 schema 就不路由并明确告知，**绝不静默降级成文本解析** — `P0-03` §7.1 ③
@@ -217,26 +236,28 @@
 
 ---
 
-## 补齐项 · 2026-08-21 文档核对
+## 补齐项 · 2026-08-21 文档核对 → 2026-08-22 交付
 
-逐份读 `docs/design/` 与已勾里程碑对账的结果。**共约 17 人日，余量因此转负**（见文首表）—— 这批要进第 3 周末的容量复核。
+逐份读 `docs/design/` 与已勾里程碑对账的结果。原计约 17 人日，**已交付约 14 人日**（2026-08-22），剩下的见下。
 
-核对时 `pytest -q` 是 **146 passed / 3 skipped**（skip 是没起 Postgres），六个守护文件全绿；`pytest -m release` 如设计预期失败于文案审校那条。
+2026-08-22 交付后 `pytest -q` 是 **250 passed / 4 skipped**（skip 是没起 Postgres），
+六个守护文件全绿；`pytest -m release` 如设计预期仍失败于文案审校那条。
+前端 `tsc --noEmit` + `vite build` 从**原先就是红的**变绿（两处遗留类型错误顺手修了）。
 
-### 重新打开的里程碑（主体已交付，出处文档的验收口径未达）
+### 重新打开的里程碑 —— 全部已补齐
 
-| 项 | 缺口 | 补齐 |
-|---|---|---|
-| `P0-03` M2 | Checkpointer 是 `MemorySaver`，图状态在进程内 | **3d** ⚡ |
-| `P0-05` M1 | stdio 客户端未接线，§3 进程隔离要求未落地 | 2d |
-| `P0-05` M2 | 断开连接不调第三方 revoke 端点（§10 验收 2） | 1d |
-| `P0-05` M6 | 契约测试缺失 | 1d |
-| `P0-04` M1 | 无历史任务搜索（WS-1） | 1d |
-| `P0-04` M5 | 产物面板无预览（WS-5） | 1d |
-| `P0-07` M3 | 只有 DEFAULT 分区，12 个月保留期无执行者 | 1d |
+| 项 | 缺口 | 补齐 | 状态 |
+|---|---|---|---|
+| `P0-03` M2 | Checkpointer 是 `MemorySaver`，图状态在进程内 | 3d | ✅ `PostgresSaver` + `task_runtime_state` + 稳定 thread_id + 启动恢复 |
+| `P0-05` M1 | stdio 客户端未接线，§3 进程隔离要求未落地 | 2d | ✅ `mcp_transport` 默认 stdio；streamable-http 登记为偏离 11 |
+| `P0-05` M2 | 断开连接不调第三方 revoke 端点（§10 验收 2） | 1d | ✅ Google / GitHub 真撤；Notion 无端点，如实告知 |
+| `P0-05` M6 | 契约测试缺失 | 1d | ✅ 23 个工具的请求/响应契约 + 依赖字段承重断言 |
+| `P0-04` M1 | 无历史任务搜索（WS-1） | 1d | ✅ 服务端 `?q=`，标题 + 原始请求正文 |
+| `P0-04` M5 | 产物面板无预览（WS-5） | 1d | ✅ 服务端解析四种 kind，覆盖 xlsx/csv/md/docx/png |
+| `P0-07` M3 | 只有 DEFAULT 分区，12 个月保留期无执行者 | 1d | ✅ `cogniwork.maintenance audit-retention` + cron |
 
-⚡ **`P0-03` M2 的顺序已经不对了**：阶段 5 的审批链路、写工具、Skill 执行都建在进程内状态上，
-本来该在阶段 5 之前补。现在每多接一个有副作用的工具，这条的返工面就更大 —— 优先级按这个判断，不按它排在哪一阶段。
+**`P0-03` M2 的顺序风险已解除**。阶段 5 的审批链路、写工具、Skill 执行都建在进程内状态上，
+每多接一个有副作用的工具返工面就扩大一圈 —— 所以它排在这批的第一个做，而不是按它在哪一阶段。
 
 ### 设计文档要求、此前没有任何条目承接的
 
@@ -245,13 +266,17 @@
         用户关掉客户端时收不到桌面通知，回来必须能看到发生过什么
       - 邮件通知延后。它需要一套独立的事务邮件基础设施（送达率、退信、退订、反垃圾合规），
         **与 Gmail 连接器无关** —— 用用户授权的 Gmail scope 发平台通知是对该授权用途的挪用
-- [ ] **`P0-07` §10 三条边界声明补全** — 0.5d
-      - 现状只落了第 2 条市场边界（`apps/web/src/i18n.ts`），而 §10 的标题是「**必须在产品内明示**」
-      - 缺第 1 条「不支持企业管理员代员工开启，**这是设计约束不是暂未实现**」
-      - 缺第 3 条「只提供可审计记录，**不代替企业做合规判断**」
-      - 与阶段 0 的隐私政策页是同一份产出，合并做
-- [ ] **结掉 `P0-02` §12 待决 1**（中文全文检索是否投入分词） — 0.5d
-      - 唯一还开着的模块级待决问题。文档定的做法是「先跑纯向量方案的评测，用数据决定」，评测脚本已在
+- [x] **`P0-07` §10 三条边界声明补全** — 0.5d（2026-08-22）
+      - 三条都落在隐私中心顶部（`PrivacyCenter` 的 `cw-boundaries`），双语文案在 `i18n.ts`
+      - 第 1 条「不支持企业管理员代员工开启，**这是设计约束不是暂未实现**」= `adminBoundary`
+      - 第 3 条「只提供可审计记录，**不代替企业做合规判断**」= `complianceBoundary`
+      - ⚠️ **隐私政策页那一份还没做**（与阶段 0 的 Google 验证材料合并做），本条只解决「产品内明示」
+- [x] **结掉 `P0-02` §12 待决 1**（中文全文检索是否投入分词） — 0.5d（2026-08-22）
+      - **结论：Phase 1 不投入。** 测量结果是中文 lexical 分量恒为 0（连子串都不得分），
+        检索完全靠向量召回；`pg_jieba` 是 PG 扩展，引入会把 CI 与生产镜像绑到自定义构建（同偏离 10）
+      - 回写到 `P0-02` §12、`docs/eval/memory-retrieval.md`、偏离 13；
+        测量由 `test_chinese_queries_get_no_lexical_signal_without_a_tokenizer` 钉住
+      - Phase 2 若开放中文市场，先评估 **CJK 字符 bigram**（不需要词典也不需要扩展），再谈分词
 - [ ] 🧪 **Scope 交付文案英文母语审校** — `P0-07` §13 验收 3、A8 落实要求 ② — 发版门禁，不计开发工时
       - 14 个 Scope 的 `review_status` 全是 `pending`，`pytest -m release` 因此是红的（设计如此，不阻塞 PR）
       - 审校通过后逐条改 `approved`；**缺任一项不得发版**
@@ -259,23 +284,22 @@
       - 凭据泄露扫描已有守护；**渗透测试此前无承接**
 - [ ] **`docs/eval/desktop-adapters.md`** — `README` 评测产出物表、`P0-08` D5 — 随 D5 交付，不另计
 
-### 小缺陷与偏离（不重开里程碑，但要修）
+### 小缺陷与偏离 —— 全部已修（2026-08-22）
 
-- [ ] **`governance.py` 的 `date.today()` 走本地时区** — `00-conventions.md` §2、代码约定 — 0.5d
-      - 日额度会在用户本地午夜之外的时刻翻页。仓库约定是 UTC（`core.clock.now()`），
-        守护只拦 `utcnow()`，没拦这个 —— 顺手把守护也补上
-- [ ] **日额度降级到 economy 后没有提示用户** — `P0-03` §8 — 0.5d
-      - §8 的原话是「当日转为仅 `fast.small` 路由**并提示用户**」。不提示的话，
-        用户只会觉得「今天它变笨了」，这正是降级而非硬停想避免的体验
-- [ ] **成本估算是单一费率** `cost_for_tokens(usd_per_1k=0.003)` — `P0-03` §8 — 0.5d
-      - 不区分模型与供应商。阈值本来就是估值待校准，但费率也是估值时，
-        `daily_llm_usage` 那份定价验证数据的可信度会打折
-- [ ] **全局 LLM 并发令牌桶** — `P0-03` §8 末行 — 1d
-      - per-(user, provider) 桶有了，全局配额桶没有
-- [ ] **`packages/mcp-connectors` 位置偏离登记** — `P0-05` §3.1 — 0.5d
-      - §3.1 说自托管连接器统一放这里，实际实现在 `apps/backend/src/cogniwork/tools/`，包里只剩 README
-      - `CLAUDE.md:41` 已记了这个事实，但 **`docs/design/README.md` 的偏离表没登记** —— 按仓库规矩要登记
-      - 顺带修根目录 `README.md:113`：那行还写着 `mcp-connectors/ # SaaS connector implementations`
+- [x] **`governance.py` 的 `date.today()` 走本地时区** — `00-conventions.md` §2、代码约定 — 0.5d
+      - 改用新增的 `core.clock.today()`（UTC）。日额度的日界现在与 `daily_llm_usage` 的记账日界一致
+      - 守护也补上了：`test_no_local_timezone_today` 同时拦 `date.today()` 与 `datetime.now()`
+- [x] **日额度降级到 economy 后没有提示用户** — `P0-03` §8 — 0.5d
+      - 转 economy 时发一条 `message.delta`（`DOWNGRADE_NOTICE`），一个任务只发一次
+      - **不进 `messages`**：进了就可能被 `_last_assistant_text` 当成任务结论写进 `result.summary`
+- [x] **成本估算是单一费率** — `P0-03` §8 — 0.5d
+      - `TOKEN_RATES` 按 (vendor, model) 记，输入输出分开；认不出的模型（含自定义 provider）
+        按最贵一档估 —— 低估会让任务在成本闸门前多走几步，而那道闸门是防跑飞的
+- [x] **全局 LLM 并发令牌桶** — `P0-03` §8 末行 — 1d
+      - `GlobalLlmConcurrency`（`COGNIWORK_LLM_GLOBAL_CONCURRENCY`，默认 16）。满了排队 120s，
+        之后按限流失败 —— 与 §6 的限流同一个取舍：让步骤慢一点，别让任务死掉
+- [x] **`packages/mcp-connectors` 位置偏离登记** — `P0-05` §3.1 — 0.5d
+      - 登记为 `docs/design/README.md` **偏离 12**；根目录 `README.md` 的仓库树也改了
 
 ---
 
@@ -308,7 +332,7 @@
 | 时点 | 检查什么 | 不达标怎么办 | 出处 |
 |---|---|---|---|
 | **第 1 周末** | **G1** — Google 验证材料是否已提交 | 当周上报，不等月末 | `P0-05` §2.1.1 |
-| **第 3 周末** | **容量复核 + G1 合并成一次会**。判据：零授权闭环跑通了没有 + §补齐项那 17 人日怎么消化 | 落后 >10% 立即启用预案第一刀 | A9.1、A10 |
+| **第 3 周末** | **容量复核 + G1 合并成一次会**。判据：零授权闭环跑通了没有 + §补齐项的剩余项（B9 通知 3d + 渗透测试待估）怎么排 | 落后 >10% 立即启用预案第一刀 | A9.1、A10 |
 | 第 1 个月末 | 第二次容量复核（burn-down） | 同上 | A9.1 |
 | **第 2 个月末** | **G2** — Google restricted scope 是否已获批 | 启用「Gmail 只发不读」降级预案 | `P0-05` §2.1.1 |
 
@@ -328,9 +352,10 @@
 |---|---|
 | **CASA 周期不可控** | 已从产品级阻塞降为功能风险（A10）。配 G1/G2 + 降级预案 |
 | **CASA 未过 × Gmail 用户 = 只有粘贴** | A10 与 B5 叠加产生的盲区。桌面端只做 Graph，覆盖的是 M365 用户，**与 Gmail 用户不重叠，兜不了底**。规模取决于实验的邮箱分布数据 — `P0-08` §2.1 |
-| **余量已转负（约 −15 人日）** | 2026-08-21 核对补入约 17 人日。原本就等同没有余量，现在是缺口。第 3 周末复核必须处理；预案第一刀（macOS 只上 Excel，约 15d）本来就要求在前期砍 |
+| **余量已转负（约 −15 人日）** | 2026-08-21 核对补入约 17 人日，其中约 14 已于 2026-08-22 交付 —— **但那是花掉的，不是省下的，缺口不变**。第 3 周末复核必须处理；预案第一刀（macOS 只上 Excel，约 15d）本来就要求在前期砍 |
 | `gmail.send` 档位未核实 | 降级预案的支点。阶段 0 第 2 项 |
-| **审批链路建在进程内状态上** | 阶段 5 的写工具与 Skill 执行都依赖 `engine.py` 的进程内 dict。`P0-03` M2 的 checkpointer 补齐每推迟一轮，返工面就扩大一圈 — §补齐项 |
+| ~~审批链路建在进程内状态上~~ | **已解除（2026-08-22）**：checkpointer 落 PostgreSQL，运行态落 `task_runtime_state`。仍在的约束是**单进程部署** —— SSE 事件总线还在进程内，且启动恢复假设只有一个进程在跑（`docs/deploy.md` §5）|
+| **渗透测试仍无承接** | `P0-07` §13 验收 7 的要求。凭据泄露扫描有守护，渗透测试没有人也没有工时估算。Phase 1 后期验收项，越晚安排越可能变成发版前的阻塞 |
 
 ---
 
@@ -343,7 +368,7 @@
 - [x] **PR 模板自愿性检查表** — `P0-07` §8.1、`00-conventions.md` §5
 - [x] **`core/`** —— 配置（语言不硬编码）、错误模型（受控词表）、UUIDv7、UTC 时间 — `00-conventions.md` §2、§6
 - [x] **`packages/shared-types`** —— 错误码、SSE 事件、审批动作；与后端一致性有守护拦 — `00-conventions.md` §6、§7
-- [x] **`0001_consent.sql`** —— `consent_record`（append-only）+ `consent_current` + `execution_audit`（按 `created_at` RANGE 分区，**目前只有 DEFAULT 分区**，回收任务见 §补齐项）— `P0-07` §4、§5.2
+- [x] **`0001_consent.sql`** —— `consent_record`（append-only）+ `consent_current` + `execution_audit`（按 `created_at` RANGE 分区）— `P0-07` §4、§5.2
 - [x] **CI workflow** —— 守护测试与普通测试一起跑；发版检查项只在打 tag 时跑
 - [x] 修 `00-conventions.md` 三处与新决策矛盾的地方（Gmail/Slack 示例对调、`file:upload:read` → `file:local:read`、「四项元数据」→ 六项）
 - [x] **Consent 落库** —— `PostgresConsentStore`：Redis `consent:{user_id}` hash 优先，未命中回落 `consent_current`；写时失效 — `P0-07` §4
@@ -351,8 +376,8 @@
 - [x] **授权/撤销 API** —— `POST /api/v1/consent`、`DELETE /api/v1/consent/{scope}`；撤销 append `revoked`；`purge_data` 默认 false（B2）— `P0-07` §6.1、§6.3
 - [x] **认证** —— `POST /api/v1/auth/register`、`/login`、`GET /auth/me`；Bearer JWT — `00-conventions.md` §6
 - [x] **数据库迁移工具** —— `python -m cogniwork.migrate`；`0002_account.sql`；CI 在测试前跑迁移 — `00-conventions.md` §2
-- [x] **TaskEngine + LangGraph act 循环** —— 任务状态机、builtin 工具、权限闸门、SSE 断线补发 — `P0-03` M1/M3/M5/M6（**M2 的 checkpointer 仍是 `MemorySaver`**，见 §补齐项）
-- [x] **零授权工作台** —— `apps/web` 三栏布局 + 上传/产物/时间线；上传不加 Scope — `P0-04` M2/M3 全量，**M1/M5 有验收缺口**（见 §补齐项）
+- [x] **TaskEngine + LangGraph act 循环** —— 任务状态机、builtin 工具、权限闸门、SSE 断线补发 — `P0-03` M1/M3/M5/M6
+- [x] **零授权工作台** —— `apps/web` 三栏布局 + 上传/产物/时间线；上传不加 Scope — `P0-04` M2/M3
 - [x] **零授权 E2E** —— `tests/e2e/test_zero_auth_path.py`：注册 → 上传 xlsx → 周报 → 下载，且 `consent_record` 为空 — `P0-07` §8.3
 - [x] **动态无旁路守护** —— mock DENY 后 Executor 不得出网 — `P0-07` §8.2
 - [x] **Memory OS** —— `memory_item` / `episodic_record`、混合检索、候选确认、文件摄取、按 Scope 物理删除 — `P0-02` M1–M7
@@ -360,15 +385,27 @@
 - [x] **工作台完善** —— Memory Browser、审批卡、授权卡、顺手沉淀、上下文记忆、隐私中心 — `P0-04` M4/M6/M7、`P0-07` M2/M4/M5
 - [x] **B6 清理开关** —— 设置页可见、默认关闭 — `P0-02` §12.2
 - [x] **个人画像** —— Profile 表（部分唯一索引）、访谈状态机、注入缓存、归档+新建 — `P0-01` M1–M5、B7
-- [x] **MCP 只读连接器** —— Calendar / Notion / Gmail 只读 + GitHub 三档代表工具、信封加密 Vault、连接管理 UI — `P0-05` M3/M4/M7 全量；**M1 传输接线与 M2 第三方 revoke 有缺口**（见 §补齐项）
+- [x] **MCP 只读连接器** —— Calendar / Notion / Gmail 只读 + GitHub 三档代表工具、信封加密 Vault、连接管理 UI — `P0-05` M3/M4/M7
 - [x] **Skill** —— 数据模型 / CRUD / 版本快照、自然语言与从任务草稿、workflow 驱动（嵌套限 1 层运行时拒绝）、预检、dry-run、Library + 五个预置示例（四个零授权、定义文件不写连接器名）— `P0-06` M1–M8
-- [x] **写/不可撤销 + 韧性** —— Gmail / Calendar / Notion 写能力与审批联调；read 可重试、irreversible 不自动重试、按 provider 熔断 — `P0-05` M5 全量；**M6 的契约测试缺失**（见 §补齐项）
+- [x] **写/不可撤销 + 韧性** —— Gmail / Calendar / Notion 写能力与审批联调；read 可重试、irreversible 不自动重试、按 provider 熔断 — `P0-05` M5
 - [x] **Custom Provider** —— SSRF（https / 公网 / 钉死 IP / 不跟随重定向）+ tool-use 探测不静默降级 + `llm:custom:route` — `P0-03` M6b
 - [x] **资源治理 + finalize** —— 步数/成本/日额度/并发；部分成功列出未完成项 — `P0-03` M7
 - [x] **冷启动模板 + 埋点** —— 零授权任务模板；L3 = 授权且此后有成功执行；`preset_copy` 不计入退出条件 — `P0-04` M8
 
+## 已完成（2026-08-22 · 补齐 2026-08-21 核对出的缺口）
+
+- [x] **RT-5 持久化与恢复** —— `PostgresSaver` checkpointer + `task_runtime_state`（`0008`）+ 稳定 `thread_id` + 启动接回被打断的任务 — `P0-03` M2、§12 验收 1
+- [x] **MCP stdio 传输接线** —— `mcp_transport` 默认 `stdio`，未知值启动即报错；崩溃 / 超时收成 ToolResult — `P0-05` M1、§3
+- [x] **断开连接调第三方 revoke** —— Google / GitHub 真撤，Notion 无端点如实告知；先撤后删 — `P0-05` M2、§10 验收 2
+- [x] **连接器契约测试** —— 23 个工具的请求/响应契约清单 + 依赖字段承重断言 + catalog/实现不脱节 — `P0-05` M6
+- [x] **历史任务搜索** —— 服务端 `?q=`，匹配标题与原始请求正文 — `P0-04` M1、WS-1
+- [x] **产物预览** —— 服务端解析 table / markdown / text / image，覆盖 xlsx/csv/md/docx/png — `P0-04` M5、WS-5
+- [x] **审计分区回收执行者** —— `python -m cogniwork.maintenance audit-retention` + cron — `P0-07` M3、§7
+- [x] **`P0-07` §10 三条边界在产品内明示** —— 隐私中心顶部，双语
+- [x] **五个小缺陷** —— UTC 日界（含新守护）、economy 降级提示、按模型计费率、全局 LLM 并发桶、偏离登记（11 / 12 / 13）
+- [x] **结掉 `P0-02` §12 待决 1** —— 中文分词 Phase 1 不投入，测量与理由已回写
+
 **未完成的部分**：桌面 Computer Use（独立子团队）。阶段 0 的 Google 验证 / CASA / 用户实验招募仍在。
+剩余补齐项：**B9 通知渠道（3d）**、Scope 文案英文母语审校（发版门禁）、渗透测试（待估）、`docs/eval/desktop-adapters.md`（随 D5）。
 
-**已勾里程碑的验收缺口见 §补齐项**（2026-08-21 逐文档核对，约 17 人日）。上一轮核对里「资源治理 + 日次成本聚合表」那条已由 `runtime/governance.py` + `daily_llm_usage` 解决。
-
-> 核对基线：`27d2733`。该提交只刷新了 `CLAUDE.md`，未改代码，因此本轮结论以 `ed4084c` 的代码状态为准。
+> 核对基线：`27d2733`（只改文档），代码状态基线 `ed4084c`。2026-08-22 的补齐以 `88eb980` 列出的缺口为清单。

@@ -15,11 +15,13 @@ from cogniwork.core.clock import now
 from cogniwork.core.config import Settings, get_settings
 from cogniwork.core.errors import InvalidRequest, NotFound
 from cogniwork.core.ids import new_id
-from cogniwork.runtime.approvals import ApprovalService, PendingToolCall
+from cogniwork.runtime.approvals import ApprovalService
 from cogniwork.runtime.events import InMemoryEventBroker
+from cogniwork.runtime.governance import GlobalLlmConcurrency
 from cogniwork.runtime.graph import compile_graph
 from cogniwork.runtime.llm.router import ModelRouter
 from cogniwork.runtime.models import Surface, Task, TaskStatus, can_transition
+from cogniwork.runtime.state import RuntimeStateRegistry
 from cogniwork.runtime.tools.registry import ToolRegistry, build_builtin_registry
 from cogniwork.runtime.tools.router import ToolRouter
 
@@ -40,6 +42,8 @@ class TaskEngine:
         memory: Any | None = None,
         approvals: ApprovalService | None = None,
         profile: Any | None = None,
+        state_store: Any | None = None,
+        checkpointer: Any | None = None,
     ) -> None:
         self.store = store
         self.events = events or InMemoryEventBroker()
@@ -52,13 +56,18 @@ class TaskEngine:
         self.approvals = approvals or ApprovalService()
         self.consent = consent
         self.step_limit = self.settings.task_step_limit
-        self.messages: dict[str, list] = {}
-        self.used_memories: dict[str, list] = {}
-        self.blocked_scopes: dict[str, str] = {}
-        self.pending_calls: dict[str, PendingToolCall] = {}
-        self.skill_cursors: dict[str, Any] = {}
+        # 运行态落库（P0-03 RT-5）。这五个仍是 dict 形状，但读写都过存储 ——
+        # waiting_approval 等 24 小时期间重启，上下文不能跟着进程一起消失。
+        self.state = RuntimeStateRegistry(state_store)
+        self.messages = self.state.messages
+        self.used_memories = self.state.used_memories
+        self.blocked_scopes = self.state.blocked_scopes
+        self.pending_calls = self.state.pending_calls
+        self.skill_cursors = self.state.skill_cursors
         self.skills: Any | None = None
         self._cancel: set[str] = set()
+        self.checkpointer = checkpointer
+        self.llm_concurrency = GlobalLlmConcurrency(self.settings.llm_global_concurrency)
         self._graph = compile_graph(self)
         self._lock = threading.Lock()
         self.max_concurrent = 3
@@ -170,8 +179,11 @@ class TaskEngine:
                     "cancel": False,
                     "paused": False,
                 },
-                # 每次运行用新 thread，避免 MemorySaver 把 resume 当成已结束的图。
-                {"configurable": {"thread_id": str(new_id())}},
+                # thread_id 跟着 task 走，不是每次新生成 —— 这是 kill -9 之后
+                # 能从最后一个 checkpoint 接上的前提（RT-5）。显式 resume 一个
+                # 已进终态的任务会换新 thread_id（见 resume()），否则图已经在
+                # END 上，重新 invoke 什么都不会发生。
+                {"configurable": {"thread_id": task.thread_id or str(task.id)}},
             )
         except Exception:
             logger.exception("task %s crashed", task.id)
@@ -194,14 +206,42 @@ class TaskEngine:
                 self.events.publish(str(fresh.id), "task.finished", status="failed")
                 self.events.close(str(fresh.id))
 
+    def recover_interrupted(self, user_ids: list[UUID] | None = None) -> list[UUID]:
+        """进程重启后把「还在跑」的任务接回去（P0-03 RT-5、§12 验收 1）。
+
+        `waiting_approval` 不在这里恢复 —— 它在等人，不该被自动推进；
+        用户点批准时走 `resolve_approval`，那条路径已经从存储里读 pending_call。
+        要恢复的是 kill -9 打断在 running/planning 的任务：图从最后一个
+        checkpoint 接上，已完成的节点不重做。
+
+        **假设单进程部署**（见 docs/deploy.md）。多副本时同一个任务会被恢复多次，
+        那种部署形态下应改由一个专门的 worker 领任务。
+        """
+        if not hasattr(self.store, "list_interrupted_tasks"):
+            return []
+        resumed: list[UUID] = []
+        for task in self.store.list_interrupted_tasks(user_ids):
+            logger.info("resuming interrupted task %s from its last checkpoint", task.id)
+            thread = threading.Thread(
+                target=self.run, args=(task,), daemon=True, name=f"task-{task.id}-recover"
+            )
+            thread.start()
+            resumed.append(task.id)
+        return resumed
+
     def get(self, user_id: UUID, task_id: UUID) -> Task:
         task = self.store.get_task(user_id, task_id)
         if task is None:
             raise NotFound("Task not found.")
         return task
 
-    def list_tasks(self, user_id: UUID, conversation_id: UUID | None = None) -> list[Task]:
-        return self.store.list_tasks(user_id, conversation_id)
+    def list_tasks(
+        self,
+        user_id: UUID,
+        conversation_id: UUID | None = None,
+        query: str | None = None,
+    ) -> list[Task]:
+        return self.store.list_tasks(user_id, conversation_id, query)
 
     def cancel(self, user_id: UUID, task_id: UUID) -> Task:
         task = self.get(user_id, task_id)
@@ -224,6 +264,9 @@ class TaskEngine:
         task.status = TaskStatus.RUNNING
         task.error = None
         task.ended_at = None
+        # 上一轮的图已经走到 END。沿用同一个 thread_id 重新 invoke 不会执行任何节点，
+        # 所以显式重试换一个 —— 已完成的步骤仍在 task_step 里，不会重做。
+        task.thread_id = str(new_id())
         task.updated_at = now()
         self.store.save_task(task)
         thread = threading.Thread(
@@ -284,6 +327,8 @@ class TaskEngine:
             cursor = self.skill_cursors.get(str(task.id))
             if cursor is not None and action is not ApprovalAction.REJECT:
                 cursor.advance()
+                # 游标是原地推进的，视图接不到，显式刷一次。
+                self.state.flush(str(task.id))
             _set_status(self, task, TaskStatus.RUNNING)
             thread = threading.Thread(
                 target=self._continue_after_approval,
@@ -368,7 +413,16 @@ class TaskEngine:
         return task
 
     def _continue_after_approval(self, task: Task, iteration: int) -> None:
-        from cogniwork.runtime.graph import _act, _after_act, _after_observe, _finalize, _observe
+        # 这条路径手工驱动节点（图已经在 END 上），所以节点包装器的 flush 不生效，
+        # 每步之后自己刷一次。
+        from cogniwork.runtime.graph import (
+            _act,
+            _after_act,
+            _after_observe,
+            _finalize,
+            _observe,
+            _persist,
+        )
 
         state = {
             "task_id": str(task.id),
@@ -381,11 +435,13 @@ class TaskEngine:
         }
         try:
             state = _observe(self, state)
+            _persist(self, task.id)
             while True:
                 if _after_observe(state) == "finalize":
                     _finalize(self, state)
                     return
                 state = _act(self, state)
+                _persist(self, task.id)
                 nxt = _after_act(state)
                 if nxt == "pause":
                     return
@@ -393,6 +449,7 @@ class TaskEngine:
                     _finalize(self, state)
                     return
                 state = _observe(self, state)
+                _persist(self, task.id)
         except Exception:
             logger.exception("task %s failed to resume after approval", task.id)
 

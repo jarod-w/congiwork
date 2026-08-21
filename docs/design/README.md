@@ -13,7 +13,7 @@
 | 文档 | 内容 |
 |---|---|
 | [00-conventions.md](00-conventions.md) | Scope 命名规范、审批模型、API/事件约定、**自愿性评审检查项** |
-| [P0-open-questions.md](P0-open-questions.md) | **Phase 1 启动前待决策者确认的问题清单**（含建议与确认后的回写动作）。状态：**部分确认**——A1–A6、B1–B3 已确认并完成回写；派生出 A7–A9 待定，其中 **A9（双平台 + 5 人的容量缺口）是阻塞项** |
+| [P0-open-questions.md](P0-open-questions.md) | **Phase 1 启动前待决策者确认的问题清单**（含建议与确认后的回写动作）。状态：**A / B 两组已全部确认**（A1–A10、B1–B11），无待决问题；模块级待决问题也已结清（`P0-02` §12 待决 1 见偏离 13） |
 
 ### P0 — Phase 1 必须交付
 
@@ -151,6 +151,9 @@ N = 6 样本很小，前两条的判定必须结合 `P0-07` §11 的定性访谈
 | 8 | §7.6 | 「先支持 1-2 家跑通」（未提及自定义供应商） | 2 家内置（Anthropic + OpenAI）**外加「用户自定义 provider」能力**——规划未涉及的新增范围 | A6 决策。代价是引入两个必须处理的问题：`base_url` 的 SSRF 防护、tool-use 能力探测与不降级；新增 Scope `llm:custom:route` 与约 4 人日。详见 `P0-03` §7.1 |
 | 9 | §6 | 「桌面 Computer Use 白名单应用操作成功率 ≥ 90%」 | 判定粒度细化为 **（适配器 × 平台）逐组合**，不做跨平台平均；未达标组合不上线且在客户端明示 | A4 选双平台后，合并统计会把 Windows 96% 与 macOS 82% 平均成「达标」，掩盖 macOS 的真实质量。详见 `P0-08` §8.3 |
 | 10 | §7.7 | 「PostgreSQL + pgvector 一套存储」 | Phase 1 实现仍是**一套 PostgreSQL、不引入独立向量库**。embedding 列用 `real[]`，余弦在应用层。原因：CI 与官方 `postgres:16` 镜像没有 `vector` 扩展。生产若装 pgvector，后续迁移可改 `vector(1024)` + HNSW，接口不用动 | 硬约束「一套存储」保留；把「必须现在装扩展」从阻塞项拿掉。详见 `apps/backend/migrations/0004_memory.sql` |
+| 11 | `P0-05` §3 / §3.1 | 架构图含 **streamable-http server**（远端托管连接器），标注「✅ 支持接入，按需」 | Phase 1 **不实现** streamable-http 传输。`mcp_transport` 只有 `stdio`（生产默认）与 `inprocess`（单测），填其它值启动即报错，不静默回落 | Phase 1 四个连接器全是自托管 stdio，没有消费方。按 §3.1 的「按需」延后。登记在这里而不是留在代码里，是因为「支持接入」这句话在文档里读起来像已经有了 —— 认了一个不存在的能力比没有这个能力更糟。详见 `apps/backend/src/cogniwork/tools/mcp.py` |
+| 12 | `P0-05` §3.1 | 「自托管连接器统一放在 `packages/mcp-connectors`，每个连接器是一个独立的 MCP server 实现」 | 实现放在 `apps/backend/src/cogniwork/tools/`（`mcp.py` / `providers.py` / `mcp_server.py`），`packages/mcp-connectors` 只留说明。stdio 入口是 `python -m cogniwork.tools.mcp_server --provider <id>`，**进程隔离要求不受影响** | 四个适配器共用 Vault、catalog、HttpTransport 与错误模型。拆成独立包会把这些复制一遍或引一条反向依赖，而 Phase 1 没有「连接器独立发版」的需求。`P0-08` 的桌面 Agent 才是真需要独立版本节奏的那个，它在独立仓库 |
+| 13 | `P0-02` §12 待决 1 | 「中文全文检索是否投入分词，建议先跑评测用数据决定」 | **Phase 1 不投入。** 中文查询的 lexical 分量恒为 0（连子串都不得分），检索完全依赖向量召回；有一条测试把这个测量钉住（`test_memory_eval.py`） | A2 目标市场是海外英语市场，中文检索质量不影响退出条件。代价一侧：`pg_jieba` 是 PG 扩展，官方 `postgres:16` 没有，引入会把 CI 与生产镜像绑到自定义构建 —— 与偏离 10 同一条理由。Phase 2 若开放中文市场，先评估**应用层分词**（或 CJK 字符 bigram，不需要词典），不引入 PG 扩展。详见 `docs/eval/memory-retrieval.md` |
 
 ---
 

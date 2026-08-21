@@ -20,6 +20,9 @@ dependencies = [
     "pypdf>=5.0",
     "python-docx>=1.1",
     "langgraph>=0.2",
+    # RT-5：checkpointer 落 PostgreSQL。表结构属于 langgraph，跟着它的版本走，
+    # 不抄进 apps/backend/migrations（见 main._open_checkpointer）。
+    "langgraph-checkpoint-postgres>=2.0",
     "langchain-core>=0.3",
     "openai>=1.50",
     "anthropic>=0.40",

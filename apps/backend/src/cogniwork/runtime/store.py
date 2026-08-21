@@ -65,6 +65,19 @@ def _step_from_row(row: dict[str, Any]) -> TaskStep:
     )
 
 
+def matches_query(task: Task, query: str) -> bool:
+    """历史任务搜索的匹配口径（P0-04 WS-1）。
+
+    标题 + 原始请求正文。标题是从首行截的 80 字，只搜标题会搜不到「上周我让它
+    做过的那件事」—— 用户记得的往往是自己当时怎么说的，不是我们截出来的标题。
+    """
+    needle = query.strip().lower()
+    if not needle:
+        return True
+    haystack = [task.title or "", str((task.input or {}).get("message") or "")]
+    return any(needle in item.lower() for item in haystack)
+
+
 def _conversation_from_row(row: dict[str, Any]) -> Conversation:
     return Conversation(
         id=row["id"],
@@ -117,15 +130,32 @@ class InMemoryTaskStore:
             return None
         return task
 
-    def list_tasks(self, user_id: UUID, conversation_id: UUID | None = None) -> list[Task]:
+    def list_tasks(
+        self,
+        user_id: UUID,
+        conversation_id: UUID | None = None,
+        query: str | None = None,
+    ) -> list[Task]:
         found = [t for t in self.tasks.values() if t.user_id == user_id]
         if conversation_id is not None:
             found = [t for t in found if t.conversation_id == conversation_id]
+        if query:
+            found = [t for t in found if matches_query(t, query)]
         found.sort(key=lambda t: t.created_at, reverse=True)
         return found
 
     def save_task(self, task: Task) -> None:
         self.tasks[task.id] = task
+
+    def list_interrupted_tasks(self, user_ids: list[UUID] | None = None) -> list[Task]:
+        found = [
+            task
+            for task in self.tasks.values()
+            if task.status in {TaskStatus.CREATED, TaskStatus.PLANNING, TaskStatus.RUNNING}
+            and (user_ids is None or task.user_id in set(user_ids))
+        ]
+        found.sort(key=lambda t: t.created_at)
+        return found
 
     def add_step(self, step: TaskStep) -> TaskStep:
         task = self.tasks[step.task_id]
@@ -300,12 +330,23 @@ class PostgresTaskStore:
             ).fetchall()
         return _task_from_row(row, [_step_from_row(s) for s in steps])
 
-    def list_tasks(self, user_id: UUID, conversation_id: UUID | None = None) -> list[Task]:
+    def list_tasks(
+        self,
+        user_id: UUID,
+        conversation_id: UUID | None = None,
+        query: str | None = None,
+    ) -> list[Task]:
         sql = "SELECT * FROM task WHERE user_id = %s"
         params: list[Any] = [user_id]
         if conversation_id is not None:
             sql += " AND conversation_id = %s"
             params.append(conversation_id)
+        if query and query.strip():
+            # 与 matches_query 同一个口径：标题 + 原始请求正文。
+            # ILIKE 足够 —— 任务量是「一个人的历史」这个量级，不需要全文索引。
+            sql += " AND (title ILIKE %s OR input->>'message' ILIKE %s)"
+            like = f"%{query.strip()}%"
+            params.extend([like, like])
         sql += " ORDER BY created_at DESC"
         with self._pool.connection() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -317,7 +358,7 @@ class PostgresTaskStore:
                 """
                 UPDATE task SET
                     title = %s, intent = %s, status = %s, result = %s, error = %s,
-                    cost_usd = %s, token_in = %s, token_out = %s,
+                    thread_id = %s, cost_usd = %s, token_in = %s, token_out = %s,
                     started_at = %s, ended_at = %s, updated_at = %s
                 WHERE id = %s
                 """,
@@ -327,6 +368,9 @@ class PostgresTaskStore:
                     task.status.value,
                     Json(task.result) if task.result is not None else None,
                     Json(task.error) if task.error is not None else None,
+                    # 显式 resume 会换 thread_id（engine.resume），必须落库，
+                    # 否则重启后又指回那个已经走到 END 的图。
+                    task.thread_id,
                     task.cost_usd,
                     task.token_in,
                     task.token_out,
@@ -336,6 +380,20 @@ class PostgresTaskStore:
                     task.id,
                 ),
             )
+
+    def list_interrupted_tasks(self, user_ids: list[UUID] | None = None) -> list[Task]:
+        sql = """
+            SELECT * FROM task
+            WHERE status IN ('created', 'planning', 'running')
+        """
+        params: list[Any] = []
+        if user_ids is not None:
+            sql += " AND user_id = ANY(%s)"
+            params.append(list(user_ids))
+        sql += " ORDER BY created_at"
+        with self._pool.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_task_from_row(r) for r in rows]
 
     def add_step(self, step: TaskStep) -> TaskStep:
         with self._pool.connection() as conn:

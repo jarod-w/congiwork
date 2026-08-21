@@ -95,6 +95,7 @@ Google restricted scope（`gmail.*`）还需应用验证 / CASA，见 `P0-05` §
 | `COGNIWORK_PUBLIC_BASE_URL` | API 的公网根 URL，**无尾斜杠**。OAuth `redirect_uri` = `{该值}/api/v1/tools/oauth/callback` |
 | `COGNIWORK_CORS_ORIGINS` | JSON 数组。OAuth 成功后重定向到**第一项** + `/?connected={provider}`。与页面实际源一致 |
 | `COGNIWORK_OAUTH_STUB` | 必须 `false`（或不设）。`true` 时连接器用桩，不会打到真实供应商 |
+| `COGNIWORK_MCP_TRANSPORT` | 保持默认 `stdio`。连接器跑在独立进程里，崩溃不带上 API，凭据不跨用户共享（`P0-05` §3）。`inprocess` 只给单测 —— 子进程拿不到测试注入的 transport。填其它值**启动即报错**，不静默回落 |
 | `COGNIWORK_DEBUG` | `false` |
 
 生成密钥：
@@ -130,6 +131,7 @@ COGNIWORK_CORS_ORIGINS='["https://app.example.com"]'
 | `COGNIWORK_TASK_COST_USD_LIMIT` | `0.50` | 单任务 |
 | `COGNIWORK_DAILY_COST_USD_LIMIT` | `5.00` | 单用户每日 |
 | `COGNIWORK_MEMORY_BUDGET_TOKENS` | `2000` | 注入任务的记忆预算 |
+| `COGNIWORK_LLM_GLOBAL_CONCURRENCY` | `16` | **全局**在飞 LLM 调用上限（`P0-03` §8）。per-(user, provider) 令牌桶管不到跨用户总量，而供应商的账号级限流是全局的。超限排队 120s，之后按限流失败返回 |
 
 无模型密钥时零授权路径（xlsx → 周报）仍能跑通，走 stub。那是开发/CI 能力，**不是**给真实用户的生产形态。
 
@@ -151,15 +153,15 @@ COGNIWORK_CORS_ORIGINS='["https://app.example.com"]'
 
 ## 5. 进程模型（硬限制）
 
-任务在 API 进程里用 **daemon 线程**跑 LangGraph；checkpointer 是进程内 `MemorySaver`；SSE 的 `subscribe` 走进程内 `InMemoryEventBroker`。Redis Stream 只用于**断线后补发**（TTL 1 小时，maxlen 约 10_000），不负责跨进程推直播事件。
+任务在 API 进程里用 **daemon 线程**跑 LangGraph。`store_backend=postgres` 时 checkpointer 是 **`langgraph.checkpoint.postgres.PostgresSaver`**，图状态与运行态（消息历史、挂起的工具调用、Skill 游标）都落库；SSE 的 `subscribe` 仍走进程内 `InMemoryEventBroker`，Redis Stream 只用于**断线后补发**（TTL 1 小时，maxlen 约 10_000），不负责跨进程推直播事件。
 
 因此 Phase 1 生产必须：
 
-1. **uvicorn `workers=1`**（或等价的单进程）。多 worker 时，执行线程与 SSE 连接可能不在同一进程，直播事件丢失，重连也补不回正在发生的步骤。
+1. **uvicorn `workers=1`**（或等价的单进程）。多 worker 时，执行线程与 SSE 连接可能不在同一进程，直播事件丢失，重连也补不回正在发生的步骤。**另外**：启动时的「接回被打断的任务」（`TaskEngine.recover_interrupted`）假设单进程 —— 多副本会让同一个任务被多个进程同时恢复。
 2. 若前面有负载均衡，对 `/api/v1/tasks/{id}/events` 开 **sticky**，或根本不要把同一环境水平扩出多个 API 进程。
-3. 进程重启会丢掉进行中的图状态。数据库里任务可能停在 `running`。重启窗口尽量短，并准备手工取消卡死任务。
+3. 进程重启**不再丢**图状态：启动时停在 `running` / `planning` 的任务会从最后一个 checkpoint 接回去，`waiting_approval` 的任务保持等待（它在等人，不该被自动推进），用户回来点批准仍能继续。仍需盯的是：重启瞬间正在 stream 的直播事件会断，客户端靠 `from_seq` 补。
 
-水平扩容不在 Phase 1 范围。要加实例，先把 checkpointer 与事件总线迁出进程，那是另一次设计，不要在部署时「先多开几个 worker 试试」。
+水平扩容不在 Phase 1 范围。要加实例，先把**事件总线**迁出进程（checkpointer 已经出去了），那是另一次设计，不要在部署时「先多开几个 worker 试试」。
 
 ---
 
@@ -203,8 +205,16 @@ export COGNIWORK_DATABASE_URL=postgresql://...
 | `0005_profile.sql` | 个人画像 |
 | `0006_tools.sql` | 连接与保险箱 |
 | `0007_skill.sql` | Skill |
+| `0008_runtime_state.sql` | `task_runtime_state`（任务运行态，RT-5）|
 
-`execution_audit` 迁移只建了 `DEFAULT` 分区。按月分区的创建与 12 个月回收是运维任务，见 §8.1。
+`execution_audit` 的按月分区不在迁移里建 —— 执行者是 `cogniwork.maintenance`（§8.1），
+分区逻辑只有一份实现且有单测。迁移跑完、API 还没起来的那段时间里写入落 `DEFAULT`，
+不会丢，启动时会被搬进当月分区。
+
+**LangGraph 的 checkpointer 自带一套表**（`checkpoints*` / `checkpoint_migrations`），
+由 `PostgresSaver.setup()` 在 API 启动时建，**不走 `cogniwork.migrate`**：那套表结构属于
+langgraph，跟着它的版本走，抄进我们的迁移目录只会在升级时打架。数据库账号因此需要
+建表权限，不能只给 DML。
 
 ### 6.3 启动 API
 
@@ -338,21 +348,36 @@ cd apps/backend
 
 ## 8. 数据面运维
 
-### 8.1 `execution_audit` 分区
+### 8.1 `execution_audit` 分区与 12 个月保留期
 
-表按 `created_at` RANGE 分区，保留 12 个月，到期 drop 分区（`P0-07` §7）。迁移没有预写死月份。每月初建下月分区，并 drop 超过 12 个月的分区：
+表按 `created_at` RANGE 分区，保留 12 个月，到期 drop 分区（`P0-07` §7）。执行者是
+`cogniwork.maintenance`，不要手搓 SQL：
 
-```sql
--- 例：2026-09
-CREATE TABLE IF NOT EXISTS execution_audit_2026_09
-    PARTITION OF execution_audit
-    FOR VALUES FROM ('2026-09-01+00') TO ('2026-10-01+00');
-
--- 例：回收 2025-08
-DROP TABLE IF EXISTS execution_audit_2025_08;
+```bash
+cd /opt/cogniwork/apps/backend
+.venv/bin/python -m cogniwork.maintenance audit-retention
 ```
 
-未建月分区时行进入 `execution_audit_default`，服务能写，但无法按月 drop，保留期承诺会破。
+它做两件事：
+
+1. **建**当月与未来 3 个月的分区。若 `DEFAULT` 分区里已经有落在该区间的行，会先把行搬过去
+   再 `ATTACH`（不搬走的话 PostgreSQL 会因为 `DEFAULT` 的分区约束冲突而拒绝创建）；
+   `DEFAULT` 里没有冲突行时走 `CREATE TABLE … PARTITION OF` 一条语句，索引自动建。
+   **搬行是 `INSERT … SELECT` + `DELETE`，在一个事务里** —— 首次在大表上跑先估耗时。
+2. **回收**超过 12 个月的月分区（`DROP TABLE`），并 `DELETE` `DEFAULT` 里同样过期的行。
+
+第 2 步会删数据，所以不放在启动流程里。**建**分区那一半 API 启动时会自己跑一次
+（`main._ensure_audit_partitions`），失败只记日志、不阻塞启动 —— `DEFAULT` 还在，审计不丢。
+
+放进 cron，每月一次足够（写成每天跑也无害，它是幂等的）：
+
+```cron
+17 3 1 * * cogniwork cd /opt/cogniwork/apps/backend && .venv/bin/python -m cogniwork.maintenance audit-retention >> /var/log/cogniwork/maintenance.log 2>&1
+```
+
+**`DEFAULT` 分区为什么留着**：它是安全网 —— 分区没建全时插入不至于失败。代价是
+`DEFAULT` 永远 `DROP` 不掉，落进去的行只能靠上面第 2 步的 `DELETE` 回收。这条 cron
+不跑，保留期承诺就是一句空话（`P0-07` §7 的表里写着「分区自动 drop」）。
 
 审计字段是脱敏摘要（硬约束 8）。不要在应用日志里补一份明文「方便排障」。
 
@@ -392,8 +417,12 @@ Redis 可丢。丢了之后：授权仍正确（回落 Postgres）；正在看�
 - [ ] `GET /api/v1/health` 返回 `store=postgres` 且 `scopes_registered` > 0
 - [ ] `COGNIWORK_JWT_SECRET` / `IP_HASH_PEPPER` / `VAULT_MASTER_KEY` 均非仓库默认值
 - [ ] `COGNIWORK_OAUTH_STUB` 为 false；`COGNIWORK_STORE_BACKEND=postgres`
-- [ ] 迁移 `already up to date`（0001–0007）
-- [ ] 本月 `execution_audit` 月分区已创建
+- [ ] 迁移 `already up to date`（0001–0008）
+- [ ] 本月 `execution_audit` 月分区已创建（API 启动时会建；没有就手工跑一次 `audit-retention`），
+      且 `audit-retention` 的 cron 已进系统（§8.1）
+- [ ] `checkpoint_migrations` 表存在（说明 `PostgresSaver.setup()` 跑过了）
+- [ ] 杀掉 API 进程再起来：`waiting_approval` 的任务点批准仍能继续（`P0-03` §12 验收 1）
+- [ ] `COGNIWORK_MCP_TRANSPORT` 是 `stdio`
 - [ ] 工作台能注册、跳过访谈、上传 xlsx、出产物、下载（零授权核心路径，硬约束 5）
 - [ ] 有 LLM 密钥时任务走真实模型，而不是 stub 周报模板
 - [ ] 反向代理下 SSE 有 `step.*` / `message.delta`，刷新页面能按 `from_seq` 补发

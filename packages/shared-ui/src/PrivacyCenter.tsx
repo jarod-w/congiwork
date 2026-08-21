@@ -43,7 +43,16 @@ export function PrivacyCenter({
   return (
     <div className="cw-privacy">
       <h1>{copy.privacy}</h1>
-      <p className="cw-muted">{markets}</p>
+      {/*
+        P0-07 §10 的三条边界，标题就是「必须在产品内明示」。三条都要在，不是
+        「其中一条」：管理员那条决定用户理解的是「我可以拒绝」还是「公司会替我开」，
+        合规那条防的是把可审计记录误当成合规结论。
+      */}
+      <ul className="cw-boundaries">
+        <li className="cw-muted">{copy.adminBoundary}</li>
+        <li className="cw-muted">{markets}</li>
+        <li className="cw-muted">{copy.complianceBoundary}</li>
+      </ul>
       <section>
         <h2>{copy.authorizations}</h2>
         {grants.length === 0 ? <p className="cw-muted">{copy.noneYet}</p> : null}

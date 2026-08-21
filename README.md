@@ -105,12 +105,14 @@ CogniWork is developed as a monorepo, with the local desktop automation agent ma
 cogniwork/                  (this repo — monorepo)
 ├── apps/
 │   ├── web/                 # Web SaaS frontend
-│   ├── desktop-shell/       # Electron shell + desktop UI, reuses web components
-│   └── backend/             # FastAPI backend, Agent Orchestration, Memory OS
+│   ├── desktop-shell/       # Electron shell + desktop UI (not created yet — P0-08)
+│   └── backend/             # FastAPI backend, Agent Orchestration, Memory OS,
+│                            #   and the four SaaS connectors (src/cogniwork/tools/)
 ├── packages/
 │   ├── shared-ui/           # Components shared between web and desktop
 │   ├── shared-types/        # API types, Skill schema definitions
-│   └── mcp-connectors/      # SaaS connector implementations
+│   └── mcp-connectors/      # stdio entry point notes; the adapters live in the
+│                            #   backend — see deviation 12 in docs/design/README.md
 └── docs/
 
 cogniwork-desktop-agent/     (separate repo)

@@ -324,7 +324,12 @@ class MemoryService:
 
 ## 12. 待决问题
 
-1. 中文全文检索是否在 Phase 1 投入分词（jieba/pg_jieba）？建议先跑纯向量方案的评测，用数据决定。
+1. ~~中文全文检索是否在 Phase 1 投入分词（jieba/pg_jieba）？~~ → **已决（2026-08-22）：Phase 1 不投入。**
+   - **测量结果**：lexical 分量按空白切词，中文一句话是一个 token。`_lexical_overlap("席位价格", "标准席位价格是…")` **= 0** —— 即使查询串是记忆正文的子串也不得分。也就是说中文检索的混合权重里，`0.25 * lexical` 那一项恒为 0，全部由向量召回承担。这条测量由 `tests/test_memory_eval.py::test_chinese_queries_get_no_lexical_signal_without_a_tokenizer` 钉住。
+   - **不投入的理由**：A2 的目标市场是海外英语市场（en-US 为交付基线），中文检索质量不影响 Phase 1 退出条件。
+   - **代价一侧**：`pg_jieba` 是 PostgreSQL 扩展，官方 `postgres:16` 镜像没有，引入它会把 CI 与生产镜像绑到自定义构建 —— 与 `README.md` 偏离 10「不把 CI 绑到 pgvector」是同一条理由。应用层 jieba 可行，但要把 lexical 检索从 SQL（`tsv @@ plainto_tsquery`）挪到应用层，是检索路径的结构性改动，不是加个依赖。
+   - **Phase 2 若开放中文市场**：先评估 **CJK 字符 bigram**（不需要词典、不需要 PG 扩展、可直接进 `_lexical_tokens`），再考虑分词。推翻本条之前先看那条测量是否还是 0。
+   - 已登记为 `docs/design/README.md` 偏离 13。
 2. ~~Episodic 记忆的保留期限~~ → **已决（B6，2026-08-18 确认默认做法）**：**Phase 1 永久保留**（量级不大），设置中**预留**「自动清理 N 个月前的任务历史」开关，**Phase 2 默认开启**。
    - **「预留开关」必须在 Phase 1 就出现在设置界面上，默认关闭**——不能只留在代码里。理由不是完备性：Phase 2 把它改为默认开启时，如果用户在 Phase 1 从没见过这个开关，那次改动对他们就是「我的历史被无声删掉了」。一个从一开始就在那儿、只是没打开的开关，语义完全不同。
    - 保留期永久不等于不可删。用户主动删除仍走 M7 的「导出 / 删除 / 按 Scope 清理」，且按仓库硬约束**物理删除**，不做软删。
