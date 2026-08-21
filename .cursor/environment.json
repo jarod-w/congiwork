@@ -1,0 +1,21 @@
+{
+  "name": "CogniWork",
+  "install": ".cursor/install.sh",
+  "start": ".cursor/start.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": ".cursor/run-backend.sh",
+      "description": "FastAPI backend on :8000 (in-memory store, LLM stub). Serves /api."
+    },
+    {
+      "name": "web",
+      "command": "pnpm --filter @cogniwork/web dev --host",
+      "description": "Vite web workspace on :5173, proxies /api to the backend."
+    }
+  ],
+  "ports": [
+    { "name": "backend", "port": 8000 },
+    { "name": "web", "port": 5173 }
+  ]
+}
