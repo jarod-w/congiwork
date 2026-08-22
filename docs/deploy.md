@@ -176,55 +176,36 @@ COGNIWORK_CORS_ORIGINS='["https://app.example.com"]'
 
 仓库里的 `apps/backend/docker-compose.yml` 只为本地开发一键起依赖（见 [`apps/backend/README.md`](../apps/backend/README.md)），**不是部署路径** —— 里面的账号密码是写死的 `cogniwork`。
 
-服务账号与目录（示例是 Debian/Ubuntu）：
+Debian/Ubuntu 上用仓库脚本一次做完账号、目录、工具链，并装好 §6.4 的包装脚本与 pm2 配置模板：
 
 ```bash
-sudo useradd --system --home /opt/cogniwork --shell /usr/sbin/nologin cogniwork
-sudo install -d -o cogniwork -g cogniwork /opt/cogniwork /var/log/cogniwork
-sudo install -d -o root -g root /opt/cogniwork/bin        # 启动脚本，服务账号只能执行
-sudo install -d -m 750 -o root -g cogniwork /etc/cogniwork   # 环境文件放这里，服务账号只读
+# 在已检出的仓库根目录（或拷过去的 release tree）
+sudo ./scripts/deploy/prepare-host.sh
+# 同机装 Postgres 16 + Redis 7 并建库/角色时：
+sudo COGNIWORK_DB_PASSWORD='…' ./scripts/deploy/prepare-host.sh --with-db
 ```
 
-把仓库（或构建产物）放到 `/opt/cogniwork`，后端虚拟环境建在 `/opt/cogniwork/apps/backend/.venv` —— §6.3 的迁移命令和 §6.4 的 pm2 配置都按这个路径写。运行时工具链：
+脚本做的事（幂等、可重复跑）：
 
-```bash
-sudo apt-get install -y python3.12 python3.12-venv build-essential
-# uv 装到系统路径：默认装进当前用户的 ~/.local/bin，服务账号（nologin）用不到
-curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
+| 步骤 | 结果 |
+|---|---|
+| 服务账号 | `cogniwork`（home `/opt/cogniwork`，shell `nologin`） |
+| 目录 | `/opt/cogniwork`、`/var/log/cogniwork`（属主服务账号）；`/opt/cogniwork/bin`（root）；`/etc/cogniwork`（750，root:`cogniwork`） |
+| 空环境文件 | `/etc/cogniwork/env`（640，若尚不存在） |
+| 包装脚本 | `/opt/cogniwork/bin/api.sh` ← `scripts/deploy/api.sh` |
+| pm2 配置 | `/etc/cogniwork/ecosystem.config.cjs` ← `scripts/deploy/ecosystem.config.cjs` |
+| 工具链 | Python 3.12 + venv、`uv`（`/usr/local/bin`）、Node 22、全局 `pm2` / `pnpm` |
+| `--with-db` | PGDG 的 PostgreSQL 16、`redis-server`、角色/库 `cogniwork`（owner） |
 
-# Node 22 + pm2：pm2 托管后端进程，Node 也用来构建前端（§6.5）
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-sudo npm i -g pm2 pnpm
-```
+**不替你做的**：把仓库放到 `/opt/cogniwork`、往 `env` 填密钥、建 venv / 跑迁移、`pm2 start` —— 那些需要操作员确认，见 §6.3–§6.4。
 
-pm2 只是进程管理器，**不代表后端跑在 Node 上** —— 它 fork 的是 venv 里的 Python。
+把仓库（或构建产物）放到 `/opt/cogniwork`，后端虚拟环境建在 `/opt/cogniwork/apps/backend/.venv` —— §6.3 的迁移命令和 §6.4 的 pm2 配置都按这个路径写。pm2 只是进程管理器，**不代表后端跑在 Node 上** —— 它 fork 的是 venv 里的 Python。
+
+RHEL 系没有对应脚本：加 PGDG 的 rpm 仓库、`dnf -qy module disable postgresql`、装 `postgresql16-server` 并用 `postgresql-16-setup initdb` 初始化，Redis 是 `dnf install redis`；账号与目录权限对齐上表即可。
 
 ### 6.2 PostgreSQL 16 与 Redis 7
 
-发行版自带的 PostgreSQL 未必是 16，用 PGDG 源钉住版本：
-
-```bash
-sudo apt-get install -y curl ca-certificates
-sudo install -d /usr/share/postgresql-common/pgdg
-sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-  https://www.postgresql.org/media/keys/ACCC4CF8.asc
-echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
-https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main" \
-  | sudo tee /etc/apt/sources.list.d/pgdg.list
-sudo apt-get update && sudo apt-get install -y postgresql-16 redis-server
-
-sudo systemctl enable --now postgresql redis-server
-```
-
-RHEL 系同理：加 PGDG 的 rpm 仓库、`dnf -qy module disable postgresql`、装 `postgresql16-server` 并用 `postgresql-16-setup initdb` 初始化，Redis 是 `dnf install redis`。用托管实例（RDS / ElastiCache 等）就整节跳过，只要连接串与 TLS 配好。
-
-建库与角色：
-
-```bash
-sudo -u postgres createuser --pwprompt cogniwork
-sudo -u postgres createdb --owner=cogniwork cogniwork
-```
+同机部署时用上一节的 `--with-db`。用托管实例（RDS / ElastiCache 等）就整节跳过，只要连接串与 TLS 配好，并手工建好 owner 角色（见下）。
 
 **这个角色必须是库的 owner（至少能建表）**：LangGraph 的 checkpointer 在 API 启动时自建 `checkpoints*` 表（§6.3），只给 DML 权限会在启动时失败。
 
@@ -312,52 +293,12 @@ cd /opt/cogniwork/apps/backend
 
 不要 `--reload`。绑定 `127.0.0.1`，把 443 交给反向代理（§6.6）。
 
-起得来之后交给 pm2。**密钥不写进 pm2 配置** —— 用一个包装脚本从 `/etc/cogniwork/env` 注入，
-配置文件本身就可以进仓库/配置管理，而 `env` 文件保持 640：
+起得来之后交给 pm2。**密钥不写进 pm2 配置** —— `prepare-host.sh` 已把包装脚本与 ecosystem 装到：
 
-`/opt/cogniwork/bin/api.sh`（root 拥有、`0755`，服务账号只能执行不能改）：
+- `/opt/cogniwork/bin/api.sh`（从 `scripts/deploy/api.sh`；root 拥有、`0755`，从 `/etc/cogniwork/env` `source` 注入变量后 `exec` uvicorn）
+- `/etc/cogniwork/ecosystem.config.cjs`（从 `scripts/deploy/ecosystem.config.cjs`；`fork` + `instances: 1`，见 §5）
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-set -a; . /etc/cogniwork/env; set +a
-cd /opt/cogniwork/apps/backend
-# exec：让 uvicorn 变成 pm2 直接管的那个 PID，否则 pm2 重启杀的是 shell，Python 留成孤儿
-exec .venv/bin/python -m uvicorn cogniwork.main:app \
-  --host 127.0.0.1 --port 8000 --workers 1
-```
-
-`/etc/cogniwork/ecosystem.config.cjs`：
-
-```js
-module.exports = {
-  apps: [{
-    name: 'cogniwork-api',
-    script: '/opt/cogniwork/bin/api.sh',
-    interpreter: 'bash',
-    cwd: '/opt/cogniwork/apps/backend',
-
-    // 硬限制（§5）：fork 模式、单实例。cluster / instances>1 会让执行线程与 SSE
-    // 连接落到不同进程，直播事件丢失，且启动恢复会把同一个任务恢复多次。
-    exec_mode: 'fork',
-    instances: 1,
-
-    autorestart: true,
-    max_restarts: 10,
-    min_uptime: '30s',
-    // pm2 先发 SIGINT（uvicorn 按优雅关闭处理），超时才 SIGKILL。任务线程是 daemon：
-    // 硬杀即丢掉进行中的图（能从 checkpoint 接回，但正在 stream 的连接会断），所以给足时间。
-    kill_timeout: 60000,
-    // 不要开 watch：源码文件一动就重启，等于线上热重载。
-    watch: false,
-    // 不要设 max_memory_restart 到贴着常态用量的值 —— 长任务正在跑时被回收，
-    // 用户看到的是任务无声中断。
-    error_file: '/var/log/cogniwork/api.err.log',
-    out_file: '/var/log/cogniwork/api.out.log',
-    time: true,
-  }],
-}
-```
+改包装逻辑时改仓库里的模板再跑一次 `prepare-host.sh`（或手工 `install`），不要直接改生产机上的副本然后忘记回写。
 
 以服务账号启动，并让它在主机重启后自己回来：
 
