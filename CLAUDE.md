@@ -65,11 +65,12 @@ pnpm install
 pnpm --filter @cogniwork/web dev                 # Vite 把 /api 代理到 :8000
 ```
 
-有 Postgres + Redis 时走生产路径（CI 也是这条）：
+有 Postgres + Redis 时走 postgres store（CI 也是这条）。本地起依赖用 `docker compose`，
+**那只是开发便捷路径** —— 生产部署是主机 + pm2，见 [`docs/deploy.md`](docs/deploy.md) §6：
 
 ```bash
 cd apps/backend
-docker compose up -d
+docker compose up -d          # 仅本地开发；生产用主机上的 PostgreSQL 16 / Redis 7
 # 环境变量见 docs/deploy.md；最少需要：
 #   COGNIWORK_STORE_BACKEND=postgres
 #   COGNIWORK_DATABASE_URL / COGNIWORK_REDIS_URL / COGNIWORK_JWT_SECRET
